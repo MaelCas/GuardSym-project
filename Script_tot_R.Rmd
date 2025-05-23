@@ -1,0 +1,2222 @@
+---
+title: "GuardSym : RNAm analysis"
+author: "Mael Castin, Diego Santos Garcia"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    css: rmakrdown.css
+    depth: 5
+    fig_caption: yes
+    highlight: tango
+    number_sections: yes
+    theme: united
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library, echo=TRUE, results='hide'}
+##Deseq2
+library(tximport)
+library(readr)
+library(DESeq2)
+library(rhdf5)
+library(readxl)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(plotrix)
+library(vsn)
+library(pheatmap)
+library(RColorBrewer)
+library(ggfortify)
+library(FactoMineR)
+library(factoextra)
+library(gridExtra)
+library(eba)
+library(ade4)
+
+##TopGO et ClusterProfiler
+library(DESeq2)
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(Rgraphviz)
+library(topGO)
+library(httr)
+library(jsonlite)
+library(clusterProfiler)
+library(stringr)
+library(tibble)
+library(gridExtra)
+library(tidyverse)
+
+##UpSetR
+library(UpSetR)
+library(ComplexUpset)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+```
+
+# Deseq2 analysis
+
+## Plant
+
+### Import des données pour l'analyse Deseq2 sur les échantillons issus des plantes
+
+```{r, label='import data for Deseq2 analysis on plant', echo=TRUE}
+# Lire la table de metadata (avec sample, condition, chemin des fichiers)
+metadata <- read_excel("metadata_coldata.xlsx", 
+    sheet = "Plant_L")
+
+# Lire la correspondance transcript-gène
+tx2gene <- read.table("rquantif/Plant/gene_to_transcript.txt", sep="\t",
+                      header=FALSE) 
+tx2gene <- tx2gene[, c(2, 1)]
+assoc_orga <- read.table("rquantif/assoc_orga.txt", sep=",", header=FALSE) 
+
+# Ajouter une colonne vide pour orga
+tx2gene$orga <- NA
+
+# Boucle pour faire les correspondances partiels
+for (i in 1:nrow(assoc_orga)) {
+  pattern <- assoc_orga$V1[i]
+  orga_value <- assoc_orga$V2[i]
+  
+  # Chercher les lignes dont transcript_id contient le pattern
+  match_idx <- grep(pattern, tx2gene$V2)
+  
+  # Ajouter l'orga correspondante
+  tx2gene$orga[match_idx] <- orga_value
+}
+# Vérifier
+head(tx2gene)
+
+# Charger les fichiers dans tximport
+files <- setNames(metadata$file, metadata$sample)
+
+tx2gene$orga <- trimws(tx2gene$orga)
+tx2gene_tomato = subset(tx2gene, orga == "Tomato")
+tx2gene_virus = subset(tx2gene, orga == "TYLCV")
+
+h5closeAll()
+txi_tomato <- tximport(files, type="kallisto", tx2gene = tx2gene_tomato, 
+                       ignoreTxVersion=FALSE)
+head(txi_tomato$counts)
+
+metadata_virus <- metadata[grepl("V", metadata$condition), ]
+files_virus <- setNames(metadata_virus$file, metadata_virus$sample)
+h5closeAll()
+txi_virus <- tximport(files_virus, type="kallisto", tx2gene = tx2gene_virus, 
+                      ignoreTxVersion=FALSE)
+head(txi_virus$counts)
+```
+
+### Formalisations des données
+
+```{r, label='Formalisations des données Deseq2 Plant', echo=TRUE}
+#Tomate
+dds_tomato <- DESeqDataSetFromTximport(txi_tomato, colData=metadata, 
+                                       design=~condition)
+
+dds_tomato <- dds_tomato[ rowSums(counts(dds_tomato)) > 10, ]
+#Keep only genes with at least 10 count
+dds_tomato.deseq.para <- DESeq(dds_tomato,fitType = "parametric")
+residual.para <- log(mcols(dds_tomato.deseq.para)$dispGeneEst) - 
+  log(mcols(dds_tomato.deseq.para)$dispFit)
+median(abs(residual.para))
+plotDispEsts(dds_tomato.deseq.para)
+dds_tomato.deseq.local <- DESeq(dds_tomato,fitType = "local")
+residual.local <- log(mcols(dds_tomato.deseq.local)$dispGeneEst) - 
+  log(mcols(dds_tomato.deseq.local)$dispFit)
+median(abs(residual.local))
+plotDispEsts(dds_tomato.deseq.local)
+dds_tomato.deseq.mean <- DESeq(dds_tomato,fitType = "mean")
+residual.mean <- log(mcols(dds_tomato.deseq.mean)$dispGeneEst) - 
+  log(mcols(dds_tomato.deseq.mean)$dispFit)
+median(abs(residual.mean))
+plotDispEsts(dds_tomato.deseq.mean)
+dds_tomato.deseq <- DESeq(dds_tomato,fitType = "local")
+dds_tomato.deseq.counts <- round(counts(dds_tomato.deseq,normalized=TRUE))
+#write.csv(dds_tomato.deseq.counts, 
+#          "rquantif/Plant/dds_tomato_deseq_counts_hisat2.txt")
+
+#Virus
+dds_virus <- DESeqDataSetFromTximport(txi_virus, colData=metadata_virus, 
+                                      design=~condition)
+
+dds_virus <- dds_virus[ rowSums(counts(dds_virus)) > 10, ]
+#Keep only genes with at least 10 count
+
+dds_virus$condition <- droplevels(dds_virus$condition)
+
+dds_virus.deseq.para <- DESeq(dds_virus, fitType = "parametric")
+
+residual.para <- log(mcols(dds_virus.deseq.para)$dispGeneEst) - 
+  log(mcols(dds_virus.deseq.para)$dispFit)
+median(abs(residual.para))
+plotDispEsts(dds_virus.deseq.para)
+dds_virus.deseq.local <- DESeq(dds_virus,fitType = "local")
+residual.local <- log(mcols(dds_virus.deseq.local)$dispGeneEst) - 
+  log(mcols(dds_virus.deseq.local)$dispFit)
+median(abs(residual.local))
+plotDispEsts(dds_virus.deseq.local)
+dds_virus.deseq.mean <- DESeq(dds_virus,fitType = "mean")
+residual.mean <- log(mcols(dds_virus.deseq.mean)$dispGeneEst) -
+  log(mcols(dds_virus.deseq.mean)$dispFit)
+median(abs(residual.mean))
+plotDispEsts(dds_virus.deseq.mean)
+dds_virus.deseq <- DESeq(dds_virus,fitType = "local")
+dds_virus.deseq.counts <- round(counts(dds_virus.deseq,normalized=TRUE))
+#write.csv(dds_virus.deseq.counts, 
+#          "rquantif/Plant/dds_virus_deseq_counts_hisat2.txt")
+```
+
+### Tests et représentations graphiques
+
+```{r, label='Deseq2 : Tests et représentations graphiques Tomate', echo=TRUE}
+vsd <- varianceStabilizingTransformation(dds_tomato, blind = FALSE)
+rld <- rlog(dds_tomato, blind=FALSE)
+head(assay(vsd), 3)
+ntd <- normTransform(dds_tomato)
+count.plot <- meanSdPlot(assay(dds_tomato))$gg
+ntd.plot <- meanSdPlot(assay(ntd))$gg
+vsd.plot <- meanSdPlot(assay(vsd))$gg
+rld.plot <- meanSdPlot(assay(rld))$gg
+ggarrange(count.plot,ntd.plot,vsd.plot,rld.plot, 
+          labels=c("counts","ntd","vst","rlog"),ncol=2,nrow=2)
+
+df <- bind_rows(
+  as_tibble(assay(ntd)[, 1:2]) %>% mutate(transformation = "ntd"),
+  as_tibble(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_tibble(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+colnames(df)[1:2] <- c("x", "y")  
+lvls <- c("ntd", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+g = ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation)  
+print(g)
+select <- order(rowMeans(counts(dds_tomato.deseq,normalized=TRUE)),
+                decreasing=TRUE)
+df <- as.data.frame(colData(dds_tomato.deseq)[,"sample"])
+
+wss <- sapply(1:10, function(k) {
+  kmeans(assay(ntd)[select, ], centers = k, nstart = 10, algorithm = "Lloyd", 
+         iter.max = 1000)$tot.withinss
+})
+
+# 1. Heatmap avec ntd
+pheatmap(assay(ntd)[select,],
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = 500)
+
+# 2. Heatmap avec vsd
+pheatmap(assay(vsd)[select,],
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = 500)
+
+# 3. Heatmap avec rld
+pheatmap(assay(rld)[select,],
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = 500)
+
+# 4. Heatmap des distances entre échantillons
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(vsd$condition, vsd$type, sep = "-")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette(rev(brewer.pal(9, "Blues")))(255)
+
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+
+vst_df1 <- as.data.frame(t(assay(vsd)))
+vst_df1$Treatment <- metadata$condition 
+pca <- prcomp(vst_df1[,1:ncol(vst_df1)-1])
+
+# Effectuer l'analyse PCA
+pca_facto <- PCA(vst_df1[,1:ncol(vst_df1)-1], graph = FALSE)
+
+# Préparer un PDF pour sauvegarde
+#pdf("rquantif/Plant/PCA_FactoMineR_Plant_results.pdf", width = 10, height = 12)
+
+## 1. Scree plot
+print(fviz_screeplot(pca_facto, addlabels = TRUE, ylim = c(0, 70)))
+
+## 2. Représentation des individus
+print(fviz_pca_ind(pca_facto, axes = c(1, 2), repel = TRUE))
+
+## 3. Cos2 des individus - Axe 1 & 2 côte à côte
+p1 <- fviz_cos2(pca_facto, choice = "ind", axes = 1, 
+                title = "Qualité de représentation (cos2) - Axe 1")
+p2 <- fviz_cos2(pca_facto, choice = "ind", axes = 2,
+                title = "Qualité de représentation (cos2) - Axe 2")
+grid.arrange(p1, p2, ncol = 2)
+
+## 4. Contributions des individus - Axe 1 & 2 côte à côte
+p3 <- fviz_contrib(pca_facto, choice = "ind", axes = 1,
+                   title = "Contribution des individus - Axe 1")
+p4 <- fviz_contrib(pca_facto, choice = "ind", axes = 2, 
+                   title = "Contribution des individus - Axe 2")
+grid.arrange(p3, p4, ncol = 2)
+
+## 5. Représentation colorée par cos2
+print(fviz_pca_ind(pca_facto, repel = TRUE, col.ind = "cos2", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+                  axes = c(1, 2), title = "Individus - Colorés par cos2"))
+
+## 6. Représentation colorée par contribution
+print(fviz_pca_ind(pca_facto, repel = TRUE, col.ind = "contrib", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+                  axes = c(1, 2),
+                  title = "Individus - Colorés par contribution"))
+
+## 7. Variables les plus contributrices (Top 5)
+print(fviz_pca_var(pca_facto, col.var = "contrib", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+                  axes = c(1, 2), repel = TRUE, 
+                  select.var = list(contrib = 5),
+                  title = "Variables - Top 5 contributions"))
+
+# 1. Extraire uniquement les données numériques
+X <- vst_df1[, 1:(ncol(vst_df1) - 1)]
+groupes <- as.factor(vst_df1$Treatment)
+
+# 2. Analyse en composantes principales avec dudi.pca
+acp <- dudi.pca(X, scannf = FALSE, nf = 5)
+
+# 3. Analyse entre groupes (between-class analysis)
+acp_btw <- ade4:::between(acp, groupes, scannf = FALSE, nf = 5)
+
+# 4. Visualisation
+s.class(acp_btw$ls, fac = groupes, col = c("steelblue", "tomato", "darkgreen"),
+        sub = "Projection des individus entre groupes")
+
+# Fermer le PDF
+#dev.off()
+
+df_pca <- as.data.frame(pca$x)
+df_pca$Treatment <- metadata$condition 
+head(df_pca)
+
+percentage <- round(pca$sdev^2 / sum(pca$sdev^2) * 100, 2)  
+percentage <- paste( colnames(df_pca), "(",
+                     paste( as.character(percentage), "%", ")", sep="") )
+g = ggplot(df_pca, aes(PC1, PC2, color=Treatment)) + geom_point(size=2) +
+  xlab(percentage[1]) + ylab(percentage[2]) + 
+  theme(axis.text.x = element_text(family = "Times"),
+        axis.title.x = element_text(family = "Times", face = "bold"), 
+        axis.text.y = element_text(family = "Times"), 
+        axis.title.y = element_text(family = "Times", face = "bold"), 
+        legend.title = element_text(family = "Times", face = "bold"), 
+        legend.text = element_text(family = "Times")) + 
+  scale_colour_hue(name = "Condition") 
+print(g)
+  
+# Calcul des loadings
+loadings <- as.data.frame(pca$rotation[,1:2])
+loadings$gene <- rownames(loadings)
+
+# Pour ne garder que les 20 plus contributeurs (par ex.)
+top_contributors <- loadings[order(abs(loadings$PC1) + abs(loadings$PC2), 
+                                   decreasing = TRUE),][1:20,]
+# Graphique biplot
+ggplot(df_pca, aes(PC1, PC2), size=2) +
+  geom_segment(data=top_contributors, aes(x=0, y=0, xend=PC1*5, yend=PC2*5), 
+               arrow=arrow(length=unit(0.2,"cm")), color="gray40") +
+  geom_text(data=top_contributors, aes(x=PC1*5, y=PC2*5, label=gene), 
+            size=3, vjust=1, hjust=1) +
+  xlab(percentage[1]) + ylab(percentage[2]) +
+  theme_minimal() +
+  scale_colour_hue(name = "Condition")
+
+select_cond=c("P_t1_Q11L, P_t1_Q11V_L", "P_t1_Q21L, P_t1_Q21V_L", "P_t2_Q11L, 
+              P_t2_Q11V_L", "P_t2_Q21L, P_t2_Q21V_L", "P_t1_Q11V_L, 
+              P_t2_Q11V_L", "P_t1_Q21V_L, P_t2_Q21V_L", "P_t1_Q11L, P_t2_Q11L", 
+              "P_t1_Q21L, P_t2_Q21L", "P_t1_Q11L, P_t1_Q21L", "P_t1_Q11V_L, 
+              P_t1_Q21V_L", "P_t2_Q11L, P_t2_Q21L", "P_t2_Q11V_L, P_t2_Q21V_L")
+select_cond="P_t1_Q11L, P_t1_Q21L"
+
+resultsNames(dds_tomato.deseq) #verification
+
+for (i in seq_along(select_cond)) {
+  # Séparer les deux IDs par la virgule
+  ids <- strsplit(select_cond[i], ",\\s*")[[1]]
+  ID1 <- ids[1]
+  ID2 <- ids[2]
+
+  res.F <- results(dds_tomato.deseq,contrast = c("condition", ID1, ID2))
+  res.F$padj <- p.adjust(res.F$pvalue, method = "fdr") 
+  #the padj is by FDR that is less restricted then bonfferoni(BH)
+  res.F <- res.F[order(res.F$padj), ]
+  sig_genes.res.F <- row.names(res.F)[which(abs(res.F$padj) < 0.05)]  
+  #catch significant genes between the plants
+  file_name= paste0("rquantif/Plant/DESeq2_Results_res.P_", 
+                    ID1, "_VS_", ID2, ".txt")
+#  write.csv(res.F, file_name)
+  
+#  if (length(sig_genes.res.F) > 0){
+#    write.csv(res.F[sig_genes.res.F,], file_name)
+#  }
+  # Ajouter une colonne pour log2FC et -log10(padj)
+  res.F$log2FoldChange[is.na(res.F$log2FoldChange)] <- 0
+  res.F$padj[is.na(res.F$padj)] <- 1
+  res.F$negLogP <- -log10(res.F$padj)
+  
+  # Ajouter une colonne de statut
+  res.F$status <- "Non significatif"
+  res.F$status[res.F$padj < 0.05 & res.F$log2FoldChange > 0] <- "Sur-exprimé"
+  res.F$status[res.F$padj < 0.05 & res.F$log2FoldChange < 0] <- "Sous-exprimé"
+  
+  # Définir des couleurs accessibles (daltonien-friendly)
+  colors <- c(
+    "Sur-exprimé" = "#D55E00",      # orange
+    "Sous-exprimé" = "#0072B2",     # bleu
+    "Non significatif" = "gray70"
+  )
+  
+  # Tracer le volcano plot
+  g <- ggplot(res.F, aes(x = log2FoldChange, y = negLogP, color = status)) +
+    geom_point(alpha = 0.8, size = 1.5) +
+    scale_color_manual(values = colors) +
+    geom_vline(xintercept = 0, color = '#a2a2a2', 
+                  alpha=0.7, linewidth = 0.2) +
+    theme_light() +
+    labs(title = paste(ID1, "vs", ID2),
+         x = "log2(Fold Change)", y = "-log10(p-adj)") 
+  print(g)
+#  ggsave(paste("rquantif/Plant/DESeq2_Results_res.P_", ID1, '_', ID2, '.pdf'),
+#         plot = g)
+}
+```
+
+```{r, label='Deseq2 : Tests et représentations graphiques Virus', echo=TRUE}
+vsd <- varianceStabilizingTransformation(dds_virus, blind = FALSE)
+rld <- rlog(dds_virus, blind=FALSE)
+head(assay(vsd), 3)
+ntd <- normTransform(dds_virus)
+count.plot <- meanSdPlot(assay(dds_virus))$gg
+ntd.plot <- meanSdPlot(assay(ntd))$gg
+vsd.plot <- meanSdPlot(assay(vsd))$gg
+rld.plot <- meanSdPlot(assay(rld))$gg
+ggarrange(count.plot,ntd.plot,vsd.plot,rld.plot, 
+          labels=c("counts","ntd","vst","rlog"),ncol=2,nrow=2)
+
+df <- bind_rows(
+  as_tibble(assay(ntd)[, 1:2]) %>% mutate(transformation = "ntd"),
+  as_tibble(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_tibble(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+colnames(df)[1:2] <- c("x", "y")  
+lvls <- c("ntd", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+g = ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation)  
+print(g)
+select <- order(rowMeans(counts(dds_virus.deseq,normalized=TRUE)),
+                decreasing=TRUE)
+df <- as.data.frame(colData(dds_virus.deseq)[,"sample"])
+
+subset_data_ntd <- assay(ntd)[sample(select, size = 1000, replace = TRUE), ]
+subset_data_vsd <- assay(vsd)[sample(select, size = 1000, replace = TRUE), ]
+subset_data_rld <- assay(rld)[sample(select, size = 1000, replace = TRUE), ]
+
+data_mat_ntd <- subset_data_ntd
+data_mat_ntd <- unique(data_mat_ntd)  # enlève les doublons exacts
+data_mat_ntd <- jitter(data_mat_ntd)
+
+data_mat_vsd <- subset_data_vsd
+data_mat_vsd <- unique(data_mat_vsd)  # enlève les doublons exacts
+data_mat_vsd <- jitter(data_mat_vsd)
+
+data_mat_rld <- subset_data_rld
+data_mat_rld <- unique(data_mat_rld)  # enlève les doublons exacts
+data_mat_rld <- jitter(data_mat_rld)
+
+k_val_ntd <- min(500, nrow(unique(subset_data_ntd)))
+k_val_vsd <- min(500, nrow(unique(subset_data_vsd)))
+k_val_rld <- min(500, nrow(unique(subset_data_rld)))
+
+wss <- sapply(1:k_val_ntd, function(k) {
+  kmeans(data_mat_ntd, centers = k, nstart = 10, algorithm = "Lloyd", 
+         iter.max = 1000)$tot.withinss
+})
+
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(vsd$condition, vsd$type, sep = "-")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette(rev(brewer.pal(9, "Blues")))(255)
+
+# 1. Heatmap avec ntd
+pheatmap(subset_data_ntd,
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = k_val_ntd)
+
+# 2. Heatmap avec vsd
+pheatmap(subset_data_vsd,
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = k_val_vsd)
+
+# 3. Heatmap avec rld
+pheatmap(subset_data_rld,
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = k_val_rld)
+
+# 4. Heatmap des distances entre échantillons
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+
+vst_df1 <- as.data.frame(t(assay(vsd)))
+vst_df1$Treatment <- metadata_virus$condition 
+pca <- prcomp(vst_df1[,1:ncol(vst_df1)-1])
+
+# Effectuer l'analyse PCA
+pca_facto <- PCA(vst_df1[,1:ncol(vst_df1)-1], graph = FALSE)
+
+# Préparer un PDF pour sauvegarde
+#pdf("rquantif/Plant/PCA_FactoMineR_Virus_results.pdf", width = 10, height = 12)
+
+## 1. Scree plot
+print(fviz_screeplot(pca_facto, addlabels = TRUE, ylim = c(0, 70)))
+
+## 2. Représentation des individus
+print(fviz_pca_ind(pca_facto, axes = c(1, 2), repel = TRUE))
+
+## 3. Cos2 des individus - Axe 1 & 2 côte à côte
+p1 <- fviz_cos2(pca_facto, choice = "ind", axes = 1,
+                title = "Qualité de représentation (cos2) - Axe 1")
+p2 <- fviz_cos2(pca_facto, choice = "ind", axes = 2,
+                title = "Qualité de représentation (cos2) - Axe 2")
+grid.arrange(p1, p2, ncol = 2)
+
+## 4. Contributions des individus - Axe 1 & 2 côte à côte
+p3 <- fviz_contrib(pca_facto, choice = "ind", axes = 1,
+                   title = "Contribution des individus - Axe 1")
+p4 <- fviz_contrib(pca_facto, choice = "ind", axes = 2, 
+                   title = "Contribution des individus - Axe 2")
+grid.arrange(p3, p4, ncol = 2)
+
+## 5. Représentation colorée par cos2
+print(fviz_pca_ind(pca_facto, repel = TRUE, col.ind = "cos2", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+                  axes = c(1, 2), title = "Individus - Colorés par cos2"))
+
+## 6. Représentation colorée par contribution
+print(fviz_pca_ind(pca_facto, repel = TRUE, col.ind = "contrib", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+                  axes = c(1, 2), 
+                  title = "Individus - Colorés par contribution"))
+
+## 7. Variables les plus contributrices (Top 5)
+print(fviz_pca_var(pca_facto, col.var = "contrib", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+                  axes = c(1, 2), repel = TRUE, 
+                  select.var = list(contrib = 5),
+                  title = "Variables - Top 5 contributions"))
+# 1. Extraire uniquement les données numériques
+X <- vst_df1[, 1:(ncol(vst_df1) - 1)]
+groupes <- as.factor(vst_df1$Treatment)
+
+# 2. Analyse en composantes principales avec dudi.pca
+acp <- dudi.pca(X, scannf = FALSE, nf = 5)
+
+# 3. Analyse entre groupes (between-class analysis)
+acp_btw <- ade4:::between(acp, groupes, scannf = FALSE, nf = 5)
+
+# 4. Visualisation
+s.class(acp_btw$ls, fac = groupes, col = c("steelblue", "tomato", "darkgreen"),
+        sub = "Projection des individus entre groupes")
+# Fermer le PDF
+#dev.off()
+
+df_pca <- as.data.frame(pca$x)
+df_pca$Treatment <- metadata_virus$condition 
+head(df_pca)
+
+percentage <- round(pca$sdev^2 / sum(pca$sdev^2) * 100, 2)  
+percentage <- paste( colnames(df_pca), "(", 
+                     paste( as.character(percentage), "%", ")", sep="") )
+g = ggplot(df_pca, aes(PC1, PC2, color=Treatment)) + geom_point(size=2) + 
+  xlab(percentage[1]) + ylab(percentage[2]) + 
+  theme(axis.text.x = element_text(family = "Times"), 
+        axis.title.x = element_text(family = "Times", face = "bold"), 
+        axis.text.y = element_text(family = "Times"), 
+        axis.title.y = element_text(family = "Times", face = "bold"),
+        legend.title = element_text(family = "Times", face = "bold"),
+        legend.text = element_text(family = "Times")) + 
+  scale_colour_hue(name = "Condition")
+print(g)
+
+select_cond_virus=c("P_t1_Q11V_L, P_t2_Q11V_L", "P_t1_Q21V_L, P_t2_Q21V_L", 
+                    "P_t1_Q11V_L, P_t1_Q21V_L", "P_t2_Q11V_L, P_t2_Q21V_L")
+
+for (i in seq_along(select_cond_virus)) {
+  # Séparer les deux IDs par la virgule
+  ids <- strsplit(select_cond_virus[i], ",\\s*")[[1]]
+  ID1 <- ids[1]
+  ID2 <- ids[2]
+
+  res.F <- results(dds_virus.deseq ,contrast = c("condition", ID1, ID2))
+  res.F$padj <- p.adjust(res.F$pvalue, method = "fdr") 
+  #the padj is by FDR that is less restricted then bonfferoni(BH)
+  res.F <- res.F[order(res.F$padj), ]
+  sig_genes.res.F <- row.names(res.F)[which(abs(res.F$padj) < 0.05)]  
+  #catch significant genes between the plants
+  file_name= paste0("rquantif/Plant/DESeq2_Results_res.V_", 
+                    ID1, "_VS_", ID2, ".txt")
+#  write.csv(res.F, file_name)
+  
+#  if (length(sig_genes.res.F) > 0){
+#    write.csv(res.F[sig_genes.res.F,], file_name)
+#  }
+  # Ajouter une colonne pour log2FC et -log10(padj)
+  res.F$log2FoldChange[is.na(res.F$log2FoldChange)] <- 0
+  res.F$padj[is.na(res.F$padj)] <- 1
+  res.F$negLogP <- -log10(res.F$padj)
+  
+  # Ajouter une colonne de statut
+  res.F$status <- "Non significatif"
+  res.F$status[res.F$padj < 0.05 & res.F$log2FoldChange > 0] <- "Sur-exprimé"
+  res.F$status[res.F$padj < 0.05 & res.F$log2FoldChange < 0] <- "Sous-exprimé"
+  
+  # Définir des couleurs accessibles (daltonien-friendly)
+  colors <- c(
+    "Sur-exprimé" = "#D55E00",      # orange
+    "Sous-exprimé" = "#0072B2",     # bleu clair
+    "Non significatif" = "gray70"
+  )
+  
+  # Tracer le volcano plot
+  g <- ggplot(res.F, aes(x = log2FoldChange, y = negLogP, color = status)) +
+    geom_point(alpha = 0.8, size = 1.5) +
+    scale_color_manual(values = colors) +
+    geom_vline(xintercept = 0, color = '#a2a2a2', 
+                  alpha=0.7, linewidth = 0.2) +
+    theme_light() +
+    labs(title = paste(ID1, "vs", ID2),
+         x = "log2(Fold Change)", y = "-log10(p-adj)") 
+  print(g)
+#  ggsave(paste("rquantif/Plant/DESeq2_Results_res.V_", ID1, '_', ID2, '.pdf'),
+#         plot = g)
+}
+```
+
+## Insect
+
+### Import des données pour l'analyse Deseq2 sur les échantillons issus des insectes
+
+```{r, label='import data for Deseq2 analysis on Insect', echo=TRUE}
+# Lire la table de metadata (avec sample, condition, chemin des fichiers)
+metadata <- read_excel("metadata_coldata.xlsx", 
+    sheet = "Insect_L")
+
+# Lire la correspondance transcript-gène
+tx2gene <- read.table("rquantif/Insect/gene_to_transcript.txt", sep=",", 
+                      header=FALSE) 
+tx2gene <- tx2gene[, c(2, 1)]
+assoc_orga <- read.table("rquantif/assoc_orga.txt", sep=",", header=FALSE) 
+
+# Ajouter une colonne vide pour orga
+tx2gene$orga <- NA
+
+# Boucle pour faire les correspondances partiels
+for (i in 1:nrow(assoc_orga)) {
+  pattern <- assoc_orga$V1[i]
+  orga_value <- assoc_orga$V2[i]
+  
+  # Chercher les lignes dont transcript_id contient le pattern
+  match_idx <- grep(pattern, tx2gene$V2)
+  
+  # Ajouter l'orga correspondante
+  tx2gene$orga[match_idx] <- orga_value
+}
+# Vérifier
+head(tx2gene)
+
+# Charger les fichiers dans tximport
+files <- setNames(metadata$file, metadata$sample)
+
+tx2gene$orga <- trimws(tx2gene$orga)
+cytotype =c("Hamiltonella", "Wolbachia", "Rickettsia", "Portiera", "Cardinium", 
+            "Arsenophonus")
+tx2gene_bemisia = subset(tx2gene, orga == "Bemisia")
+tx2gene_virus = subset(tx2gene, orga == "TYLCV")
+tx2gene_cytotype = subset(tx2gene, orga %in% cytotype)
+
+h5closeAll()
+txi_bemisia <- tximport(files, type="kallisto", tx2gene = tx2gene_bemisia, 
+                       ignoreTxVersion=FALSE)
+head(txi_bemisia$counts)
+
+metadata_virus <- metadata[grepl("V", metadata$condition), ]
+files_virus <- setNames(metadata_virus$file, metadata_virus$sample)
+h5closeAll()
+txi_virus <- tximport(files_virus, type="kallisto", tx2gene = tx2gene_virus, 
+                      ignoreTxVersion=FALSE)
+verif=txi_virus$counts != 0
+head(txi_virus$counts[verif]) #pas de virus ID
+
+h5closeAll()
+txi_cytotype <- tximport(files, type="kallisto", tx2gene = tx2gene_cytotype, 
+                         ignoreTxVersion=FALSE)
+head(txi_cytotype$counts)
+```
+
+### Formalisations des données
+
+```{r, label='Formalisations des données Deseq2 Insect', echo=TRUE}
+#Tomate
+dds_bemisia <- DESeqDataSetFromTximport(txi_bemisia, colData=metadata, 
+                                       design=~condition)
+
+dds_bemisia <- dds_bemisia[ rowSums(counts(dds_bemisia)) > 10, ]
+#Keep only genes with at least 10 count
+dds_bemisia.deseq.para <- DESeq(dds_bemisia,fitType = "parametric")
+residual.para <- log(mcols(dds_bemisia.deseq.para)$dispGeneEst) - 
+  log(mcols(dds_bemisia.deseq.para)$dispFit)
+median(abs(residual.para))
+plotDispEsts(dds_bemisia.deseq.para)
+dds_bemisia.deseq.local <- DESeq(dds_bemisia,fitType = "local")
+residual.local <- log(mcols(dds_bemisia.deseq.local)$dispGeneEst) - 
+  log(mcols(dds_bemisia.deseq.local)$dispFit)
+median(abs(residual.local))
+plotDispEsts(dds_bemisia.deseq.local)
+dds_bemisia.deseq.mean <- DESeq(dds_bemisia,fitType = "mean")
+residual.mean <- log(mcols(dds_bemisia.deseq.mean)$dispGeneEst) - 
+  log(mcols(dds_bemisia.deseq.mean)$dispFit)
+median(abs(residual.mean))
+plotDispEsts(dds_bemisia.deseq.mean)
+dds_bemisia.deseq <- DESeq(dds_bemisia,fitType = "local")
+dds_bemisia.deseq.counts <- round(counts(dds_bemisia.deseq,normalized=TRUE))
+#write.csv(dds_bemisia.deseq.counts, 
+#          "rquantif/Insect/dds_bemisia_deseq_counts_hisat2.txt")
+
+#cytotype
+dds_cytotype <- DESeqDataSetFromTximport(txi_cytotype, colData=metadata, 
+                                      design=~condition)
+
+dds_cytotype <- dds_cytotype[ rowSums(counts(dds_cytotype)) > 10, ]
+#Keep only genes with at least 10 count
+
+dds_cytotype$condition <- droplevels(dds_cytotype$condition)
+
+dds_cytotype.deseq.para <- DESeq(dds_cytotype, fitType = "parametric")
+
+residual.para <- log(mcols(dds_cytotype.deseq.para)$dispGeneEst) - 
+  log(mcols(dds_cytotype.deseq.para)$dispFit)
+median(abs(residual.para))
+plotDispEsts(dds_cytotype.deseq.para)
+dds_cytotype.deseq.local <- DESeq(dds_cytotype,fitType = "local")
+residual.local <- log(mcols(dds_cytotype.deseq.local)$dispGeneEst) - 
+  log(mcols(dds_cytotype.deseq.local)$dispFit)
+median(abs(residual.local))
+plotDispEsts(dds_cytotype.deseq.local)
+dds_cytotype.deseq.mean <- DESeq(dds_cytotype,fitType = "mean")
+residual.mean <- log(mcols(dds_cytotype.deseq.mean)$dispGeneEst) -
+  log(mcols(dds_cytotype.deseq.mean)$dispFit)
+median(abs(residual.mean))
+plotDispEsts(dds_cytotype.deseq.mean)
+dds_cytotype.deseq <- DESeq(dds_cytotype,fitType = "local")
+dds_cytotype.deseq.counts <- round(counts(dds_cytotype.deseq,normalized=TRUE))
+#write.csv(dds_cytotype.deseq.counts, 
+#          "rquantif/Insect/dds_cytotype_deseq_counts_hisat2.txt")
+```
+
+### Tests et représentations graphiques
+
+```{r, label='Deseq2 : Tests et représentations graphiques Bemisia', echo=TRUE}
+vsd <- varianceStabilizingTransformation(dds_bemisia, blind = FALSE)
+rld <- rlog(dds_bemisia, blind=FALSE)
+head(assay(vsd), 3)
+ntd <- normTransform(dds_bemisia)
+count.plot <- meanSdPlot(assay(dds_bemisia))$gg
+ntd.plot <- meanSdPlot(assay(ntd))$gg
+vsd.plot <- meanSdPlot(assay(vsd))$gg
+rld.plot <- meanSdPlot(assay(rld))$gg
+ggarrange(count.plot,ntd.plot,vsd.plot,rld.plot, 
+          labels=c("counts","ntd","vst","rlog"),ncol=2,nrow=2)
+
+df <- bind_rows(
+  as_tibble(assay(ntd)[, 1:2]) %>% mutate(transformation = "ntd"),
+  as_tibble(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_tibble(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+colnames(df)[1:2] <- c("x", "y")  
+lvls <- c("ntd", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+g = ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation)  
+print(g)
+select <- order(rowMeans(counts(dds_bemisia.deseq,normalized=TRUE)),
+                decreasing=TRUE)
+df <- as.data.frame(colData(dds_bemisia.deseq)[,"sample"])
+
+wss <- sapply(1:10, function(k) {
+  kmeans(assay(ntd)[select, ], centers = k, nstart = 10, algorithm = "Lloyd", 
+         iter.max = 1000)$tot.withinss
+})
+
+
+# 1. Heatmap avec ntd
+pheatmap(assay(ntd)[select,],
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = 500)
+
+# 2. Heatmap avec vsd
+pheatmap(assay(vsd)[select,],
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = 500)
+
+# 3. Heatmap avec rld
+pheatmap(assay(rld)[select,],
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = 500)
+
+# 4. Heatmap des distances entre échantillons
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(vsd$condition, vsd$type, sep = "-")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette(rev(brewer.pal(9, "Blues")))(255)
+
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+
+vst_df1 <- as.data.frame(t(assay(vsd)))
+vst_df1$Treatment <- metadata$condition 
+pca <- prcomp(vst_df1[,1:ncol(vst_df1)-1])
+
+# Effectuer l'analyse PCA
+pca_facto <- PCA(vst_df1[,1:ncol(vst_df1)-1], graph = FALSE)
+
+# Préparer un PDF pour sauvegarde
+#pdf("rquantif/Insect/PCA_FactoMineR_Bemisia_results.pdf", width = 10, 
+#    height = 12)
+
+## 1. Scree plot
+print(fviz_screeplot(pca_facto, addlabels = TRUE, ylim = c(0, 70)))
+
+## 2. Représentation des individus
+print(fviz_pca_ind(pca_facto, axes = c(1, 2), repel = TRUE))
+
+## 3. Cos2 des individus - Axe 1 & 2 côte à côte
+p1 <- fviz_cos2(pca_facto, choice = "ind", axes = 1, 
+                title = "Qualité de représentation (cos2) - Axe 1")
+p2 <- fviz_cos2(pca_facto, choice = "ind", axes = 2, 
+                title = "Qualité de représentation (cos2) - Axe 2")
+grid.arrange(p1, p2, ncol = 2)
+
+## 4. Contributions des individus - Axe 1 & 2 côte à côte
+p3 <- fviz_contrib(pca_facto, choice = "ind", axes = 1, 
+                   title = "Contribution des individus - Axe 1")
+p4 <- fviz_contrib(pca_facto, choice = "ind", axes = 2, 
+                   title = "Contribution des individus - Axe 2")
+grid.arrange(p3, p4, ncol = 2)
+
+## 5. Représentation colorée par cos2
+print(fviz_pca_ind(pca_facto, repel = TRUE, col.ind = "cos2", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+                  axes = c(1, 2), title = "Individus - Colorés par cos2"))
+
+## 6. Représentation colorée par contribution
+print(fviz_pca_ind(pca_facto, repel = TRUE, col.ind = "contrib", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+                  axes = c(1, 2), 
+                  title = "Individus - Colorés par contribution"))
+
+## 7. Variables les plus contributrices (Top 5)
+print(fviz_pca_var(pca_facto, col.var = "contrib", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+                  axes = c(1, 2), repel = TRUE, 
+                  select.var = list(contrib = 5),
+                  title = "Variables - Top 5 contributions"))
+# 1. Extraire uniquement les données numériques
+X <- vst_df1[, 1:(ncol(vst_df1) - 1)]
+groupes <- as.factor(vst_df1$Treatment)
+
+# 2. Analyse en composantes principales avec dudi.pca
+acp <- dudi.pca(X, scannf = FALSE, nf = 5)
+
+# 3. Analyse entre groupes (between-class analysis)
+acp_btw <- ade4:::between(acp, groupes, scannf = FALSE, nf = 5)
+
+# 4. Visualisation
+s.class(acp_btw$ls, fac = groupes, col = c("steelblue", "tomato", "darkgreen"),
+        sub = "Projection des individus entre groupes")
+# Fermer le PDF
+#dev.off()
+
+df_pca <- as.data.frame(pca$x)
+df_pca$Treatment <- metadata$condition 
+head(df_pca)
+
+percentage <- round(pca$sdev^2 / sum(pca$sdev^2) * 100, 2)  
+percentage <- paste( colnames(df_pca), "(",
+                     paste( as.character(percentage), "%", ")", sep="") )
+g = ggplot(df_pca, aes(PC1, PC2, color=Treatment)) + geom_point(size=2) +
+  xlab(percentage[1]) + ylab(percentage[2]) + 
+  theme(axis.text.x = element_text(family = "Times"),
+        axis.title.x = element_text(family = "Times", face = "bold"), 
+        axis.text.y = element_text(family = "Times"), 
+        axis.title.y = element_text(family = "Times", face = "bold"), 
+        legend.title = element_text(family = "Times", face = "bold"), 
+        legend.text = element_text(family = "Times")) + 
+  scale_colour_hue(name = "Condition") 
+print(g)
+
+select_cond=c("B_t1_Q11L, B_t1_Q11V_L", "B_t1_Q21L, B_t1_Q21V_L", "B_t2_Q11L,
+              B_t2_Q11V_L", "B_t2_Q21L, B_t2_Q21V_L", "B_t1_Q11V_L, 
+              B_t2_Q11V_L", "B_t1_Q21V_L, B_t2_Q21V_L", "B_t1_Q11L, B_t2_Q11L",
+              "B_t1_Q21L, B_t2_Q21L", "B_t1_Q11L, B_t1_Q21L", "B_t1_Q11V_L,
+              B_t1_Q21V_L", "B_t2_Q11L, B_t2_Q21L", "B_t2_Q11V_L, B_t2_Q21V_L")
+select_cond="B_t1_Q11L, B_t1_Q21L"
+  #"B_t1_Q11L, B_t2_Q11L"
+resultsNames(dds_bemisia.deseq) #verification
+
+for (i in seq_along(select_cond)) {
+  # Séparer les deux IDs par la virgule
+  ids <- strsplit(select_cond[i], ",\\s*")[[1]]
+  ID1 <- ids[1]
+  ID2 <- ids[2]
+  
+  res.F <- results(dds_bemisia.deseq,contrast = c("condition", ID1, ID2))
+  res.F$padj <- p.adjust(res.F$pvalue, method = "fdr") 
+  #the padj is by FDR that is less restricted then bonfferoni(BH)
+  res.F <- res.F[order(res.F$padj), ]
+  sig_genes.res.F <- row.names(res.F)[which(abs(res.F$padj) < 0.05)]  
+  #catch significant genes between the Insects
+  file_name= paste0("rquantif/Insect/DESeq2_Results_res.I_", 
+                    ID1, "_VS_", ID2, ".txt")
+#  write.csv(res.F, file_name)
+  
+#  if (length(sig_genes.res.F) > 0){
+#    write.csv(res.F[sig_genes.res.F,], file_name)
+#  }
+  # Ajouter une colonne pour log2FC et -log10(padj)
+  res.F$log2FoldChange[is.na(res.F$log2FoldChange)] <- 0
+  res.F$padj[is.na(res.F$padj)] <- 1
+  res.F$negLogP <- -log10(res.F$padj)
+  
+  # Ajouter une colonne de statut
+  res.F$status <- "Non significatif"
+  res.F$status[res.F$padj < 0.05 & res.F$log2FoldChange > 0] <- "Sur-exprimé"
+  res.F$status[res.F$padj < 0.05 & res.F$log2FoldChange < 0] <- "Sous-exprimé"
+  
+  # Définir des couleurs accessibles (daltonien-friendly)
+  colors <- c(
+    "Sur-exprimé" = "#D55E00",      # orange
+    "Sous-exprimé" = "#0072B2",     # bleu clair
+    "Non significatif" = "gray70"
+  )
+  
+  # Tracer le volcano plot
+  g <- ggplot(res.F, aes(x = log2FoldChange, y = negLogP, color = status)) +
+    geom_point(alpha = 0.8, size = 1.5) +
+    scale_color_manual(values = colors) +
+    geom_vline(xintercept = 0, color = '#a2a2a2', 
+                  alpha=0.7, linewidth = 0.2) +
+    theme_light() +
+    labs(title = paste(ID1, "vs", ID2),
+         x = "log2(Fold Change)", y = "-log10(p-adj)") 
+  print(g)
+#  ggsave(paste("rquantif/Insect/DESeq2_Results_res.B_", ID1, '_', ID2, '.pdf'), 
+#         plot = g)
+}
+```
+
+```{r, label='Deseq2 : Tests et représentations graphiques cytotype', echo=TRUE}
+vsd <- varianceStabilizingTransformation(dds_cytotype, blind = FALSE)
+rld <- rlog(dds_cytotype, blind=FALSE)
+head(assay(vsd), 3)
+ntd <- normTransform(dds_cytotype)
+count.plot <- meanSdPlot(assay(dds_cytotype))$gg
+ntd.plot <- meanSdPlot(assay(ntd))$gg
+vsd.plot <- meanSdPlot(assay(vsd))$gg
+rld.plot <- meanSdPlot(assay(rld))$gg
+ggarrange(count.plot,ntd.plot,vsd.plot,rld.plot, 
+          labels=c("counts","ntd","vst","rlog"),ncol=2,nrow=2)
+
+df <- bind_rows(
+  as_tibble(assay(ntd)[, 1:2]) %>% mutate(transformation = "ntd"),
+  as_tibble(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_tibble(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+colnames(df)[1:2] <- c("x", "y")  
+lvls <- c("ntd", "vst", "rlog")
+df$transformation <- factor(df$transformation, levels=lvls)
+g = ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation)  
+print(g)
+select <- order(rowMeans(counts(dds_cytotype.deseq,normalized=TRUE)),
+                decreasing=TRUE)
+df <- as.data.frame(colData(dds_cytotype.deseq)[,"sample"])
+
+subset_data_ntd <- assay(ntd)[sample(select, size = 1000, replace = TRUE), ]
+subset_data_vsd <- assay(vsd)[sample(select, size = 1000, replace = TRUE), ]
+subset_data_rld <- assay(rld)[sample(select, size = 1000, replace = TRUE), ]
+
+data_mat_ntd <- subset_data_ntd
+data_mat_ntd <- unique(data_mat_ntd)  # enlève les doublons exacts
+data_mat_ntd <- jitter(data_mat_ntd)
+
+data_mat_vsd <- subset_data_vsd
+data_mat_vsd <- unique(data_mat_vsd)  # enlève les doublons exacts
+data_mat_vsd <- jitter(data_mat_vsd)
+
+data_mat_rld <- subset_data_rld
+data_mat_rld <- unique(data_mat_rld)  # enlève les doublons exacts
+data_mat_rld <- jitter(data_mat_rld)
+
+k_val_ntd <- min(500, nrow(unique(subset_data_ntd)))
+k_val_vsd <- min(500, nrow(unique(subset_data_vsd)))
+k_val_rld <- min(500, nrow(unique(subset_data_rld)))
+
+wss <- sapply(1:k_val_ntd, function(k) {
+  kmeans(data_mat_ntd, centers = k, nstart = 10, algorithm = "Lloyd", 
+         iter.max = 1000)$tot.withinss
+})
+
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(vsd$condition, vsd$type, sep = "-")
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette(rev(brewer.pal(9, "Blues")))(255)
+
+# 1. Heatmap avec ntd
+pheatmap(subset_data_ntd,
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = k_val_ntd)
+
+# 2. Heatmap avec vsd
+pheatmap(subset_data_vsd,
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = k_val_vsd)
+
+# 3. Heatmap avec rld
+pheatmap(subset_data_rld,
+         cluster_rows = TRUE, show_rownames = FALSE,
+         cluster_cols = TRUE, show_colnames = FALSE,
+         kmeans_k = k_val_rld)
+
+# 4. Heatmap des distances entre échantillons
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+
+vst_df1 <- as.data.frame(t(assay(vsd)))
+vst_df1$Treatment <- metadata$condition 
+pca <- prcomp(vst_df1[,1:ncol(vst_df1)-1])
+
+# Préparer un PDF pour sauvegarde
+#pdf("rquantif/Insect/PCA_FactoMineR_Cytotype_results.pdf", width = 10,
+#    height = 12)
+
+## 1. Scree plot
+print(fviz_screeplot(pca_facto, addlabels = TRUE, ylim = c(0, 70)))
+
+## 2. Représentation des individus
+print(fviz_pca_ind(pca_facto, axes = c(1, 2), repel = TRUE))
+
+## 3. Cos2 des individus - Axe 1 & 2 côte à côte
+p1 <- fviz_cos2(pca_facto, choice = "ind", axes = 1,
+                title = "Qualité de représentation (cos2) - Axe 1")
+p2 <- fviz_cos2(pca_facto, choice = "ind", axes = 2,
+                title = "Qualité de représentation (cos2) - Axe 2")
+grid.arrange(p1, p2, ncol = 2)
+
+## 4. Contributions des individus - Axe 1 & 2 côte à côte
+p3 <- fviz_contrib(pca_facto, choice = "ind", axes = 1,
+                   title = "Contribution des individus - Axe 1")
+p4 <- fviz_contrib(pca_facto, choice = "ind", axes = 2, 
+                   title = "Contribution des individus - Axe 2")
+grid.arrange(p3, p4, ncol = 2)
+
+## 5. Représentation colorée par cos2
+print(fviz_pca_ind(pca_facto, repel = TRUE, col.ind = "cos2", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+                  axes = c(1, 2), title = "Individus - Colorés par cos2"))
+
+## 6. Représentation colorée par contribution
+print(fviz_pca_ind(pca_facto, repel = TRUE, col.ind = "contrib", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+                  axes = c(1, 2), 
+                  title = "Individus - Colorés par contribution"))
+
+## 7. Variables les plus contributrices (Top 5)
+print(fviz_pca_var(pca_facto, col.var = "contrib", 
+                  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+                  axes = c(1, 2), repel = TRUE, 
+                  select.var = list(contrib = 5),
+                  title = "Variables - Top 5 contributions"))
+# 1. Extraire uniquement les données numériques
+X <- vst_df1[, 1:(ncol(vst_df1) - 1)]
+groupes <- as.factor(vst_df1$Treatment)
+
+# 2. Analyse en composantes principales avec dudi.pca
+acp <- dudi.pca(X, scannf = FALSE, nf = 5)
+
+# 3. Analyse entre groupes (between-class analysis)
+acp_btw <- ade4:::between(acp, groupes, scannf = FALSE, nf = 5)
+
+# 4. Visualisation
+s.class(acp_btw$ls, fac = groupes, col = c("steelblue", "tomato", "darkgreen"),
+        sub = "Projection des individus entre groupes")
+# Fermer le PDF
+#dev.off()
+
+df_pca <- as.data.frame(pca$x)
+df_pca$Treatment <- metadata$condition 
+head(df_pca)
+
+percentage <- round(pca$sdev^2 / sum(pca$sdev^2) * 100, 2)  
+percentage <- paste( colnames(df_pca), "(", 
+                     paste( as.character(percentage), "%", ")", sep="") )
+g = ggplot(df_pca, aes(PC1, PC2, color=Treatment)) + geom_point(size=2) + 
+  xlab(percentage[1]) + ylab(percentage[2]) + 
+  theme(axis.text.x = element_text(family = "Times"), 
+        axis.title.x = element_text(family = "Times", face = "bold"), 
+        axis.text.y = element_text(family = "Times"), 
+        axis.title.y = element_text(family = "Times", face = "bold"),
+        legend.title = element_text(family = "Times", face = "bold"),
+        legend.text = element_text(family = "Times")) + 
+  scale_colour_hue(name = "Condition") 
+print(g)
+
+select_cond=c("B_t1_Q11L, B_t1_Q11V_L", "B_t1_Q21L, B_t1_Q21V_L", "B_t2_Q11L, 
+              B_t2_Q11V_L", "B_t2_Q21L, B_t2_Q21V_L", "B_t1_Q11V_L, 
+              B_t2_Q11V_L", "B_t1_Q21V_L, B_t2_Q21V_L", "B_t1_Q11L, B_t2_Q11L",
+              "B_t1_Q21L, B_t2_Q21L", "B_t1_Q11L, B_t1_Q21L", "B_t1_Q11V_L,
+              B_t1_Q21V_L", "B_t2_Q11L, B_t2_Q21L", "B_t2_Q11V_L, B_t2_Q21V_L")
+
+for (i in seq_along(select_cond)) {
+  # Séparer les deux IDs par la virgule
+  ids <- strsplit(select_cond[i], ",\\s*")[[1]]
+  ID1 <- ids[1]
+  ID2 <- ids[2]
+
+  res.F <- results(dds_cytotype.deseq ,contrast = c("condition", ID1, ID2))
+  res.F$padj <- p.adjust(res.F$pvalue, method = "fdr") 
+  #the padj is by FDR that is less restricted then bonfferoni(BH)
+  res.F <- res.F[order(res.F$padj), ]
+  sig_genes.res.F <- row.names(res.F)[which(abs(res.F$padj) < 0.05)]  
+  #catch significant genes between the Insects
+  file_name= paste0("rquantif/Insect/DESeq2_Results_res.F.C_", 
+                    ID1, "_VS_", ID2, ".txt")
+  write.csv(res.F, file_name)
+  volcano_name= paste0("volcano_C_", ID1, "_VS_", ID2, ".pdf")
+  if (length(sig_genes.res.F) > 0){
+    write.csv(res.F[sig_genes.res.F,], file_name)
+  }
+  # Ajouter une colonne pour log2FC et -log10(padj)
+  res.F$log2FoldChange[is.na(res.F$log2FoldChange)] <- 0
+  res.F$padj[is.na(res.F$padj)] <- 1
+  res.F$negLogP <- -log10(res.F$padj)
+  
+  # Ajouter une colonne de statut
+  res.F$status <- "Non significatif"
+  res.F$status[res.F$padj < 0.05 & res.F$log2FoldChange > 0] <- "Sur-exprimé"
+  res.F$status[res.F$padj < 0.05 & res.F$log2FoldChange < 0] <- "Sous-exprimé"
+  
+  # Définir des couleurs accessibles (daltonien-friendly)
+  colors <- c(
+    "Sur-exprimé" = "#D55E00",      # orange
+    "Sous-exprimé" = "#0072B2",     # bleu clair
+    "Non significatif" = "gray70"
+  )
+  
+  # Tracer le volcano plot
+  g <- ggplot(res.F, aes(x = log2FoldChange, y = negLogP, color = status)) +
+    geom_point(alpha = 0.8, size = 1.5) +
+    scale_color_manual(values = colors) +
+    geom_vline(xintercept = 0, color = '#a2a2a2', 
+                  alpha=0.7, linewidth = 0.2) +
+    theme_light() +
+    labs(title = paste(ID1, "vs", ID2),
+         x = "log2(Fold Change)", y = "-log10(p-adj)") 
+  print(g)
+#  ggsave(paste("rquantif/Insect/DESeq2_Results_res.C_", ID1, '_', ID2, '.pdf'),
+#         plot = g)
+}
+```
+
+# TopGO analysis
+
+## Plant
+
+### Import des données pour l'analyse TopGO sur les échantillons issus des plantes
+
+```{r, label='import data for TopGO analysis on plant', echo=TRUE}
+# Annotations GO (InterProScan)
+interproscan <- read.delim('TopGO/Plant/gene_GO_plant.txt', 
+   header = FALSE, sep = '\t')
+head(interproscan)
+
+interproscan$V1 <- vapply(interproscan$V1, 
+                          function(x) gsub('_orf[0-9]+', '', x), character(1))
+#take out the orf part
+
+interproscan <- as.data.frame(interproscan)
+head(interproscan)
+# Vérifier la structure des fichiers
+if (ncol(interproscan) < 2) 
+  stop('Erreur : Le fichier interproscan semble mal formaté.')
+
+# Définir la liste des conditions d’intérêt
+select_cond <- c(
+  "P_t1_Q11L, P_t1_Q11V_L",
+  "P_t1_Q21L, P_t1_Q21V_L",
+  "P_t2_Q11L, P_t2_Q11V_L",
+  "P_t2_Q21L, P_t2_Q21V_L",
+  "P_t1_Q11V_L, P_t2_Q11V_L",
+  "P_t1_Q21V_L, P_t2_Q21V_L",
+  "P_t1_Q11L, P_t2_Q11L",
+  "P_t1_Q21L, P_t2_Q21L",
+  "P_t1_Q11L, P_t1_Q21L",
+  "P_t1_Q11V_L, P_t1_Q21V_L",
+  "P_t2_Q11L, P_t2_Q21L",
+  "P_t2_Q11V_L, P_t2_Q21V_L"
+)
+
+# Lire les lignes du fichier contenant les chemins et infos 
+lines_raw <- readLines("TopGO/Plant/liste_deseq.txt")
+
+# Initialiser une liste de résultats 
+chemins_trouves <- data.frame(ID1 = character(),
+                              ID2 = character(),
+                              chemin = character(),
+                              info = character(),
+                              stringsAsFactors = FALSE)
+
+# Recherche des lignes correspondantes à chaque couple
+for (cond in select_cond) {
+  ids <- str_split(cond, ",\\s*")[[1]]
+  id1 <- ids[1]
+  id2 <- ids[2]
+  
+  # Match la ligne contenant les deux identifiants dans le nom du fichier
+  match_lines <- lines_raw[str_detect(lines_raw, fixed(id1)) & 
+                             str_detect(lines_raw, fixed(id2))]
+  
+  for (line in match_lines) {
+    # Séparer le chemin et l'info
+    parts <- str_split(line, ",\\s*")[[1]]
+    chemin <- parts[1]
+    info <- ifelse(length(parts) > 1, parts[2], NA)
+
+    if (!is.na(chemin) && file.exists(chemin)) {
+      chemins_trouves <- rbind(
+        chemins_trouves,
+        data.frame(ID1 = id1, ID2 = id2, chemin = chemin, info = info, 
+                   stringsAsFactors = FALSE)
+      )
+    } else {
+      warning(paste("Fichier introuvable ou chemin invalide:", chemin))
+    }
+  }
+}
+
+# Importer et annoter les tableaux
+list_tables <- list()
+
+for (i in 1:nrow(chemins_trouves)) {
+  path <- chemins_trouves$chemin[i]
+  id_label <- paste(chemins_trouves$ID1[i], chemins_trouves$ID2[i], 
+                    sep = "_VS_")
+  info_val <- chemins_trouves$info[i]
+
+  df <- tryCatch({
+    read_delim(path, delim = ",", show_col_types = FALSE)
+  }, error = function(e) {
+    warning(paste("Erreur lors de l'import:", path))
+    return(NULL)
+  })
+
+  if (!is.null(df)) {
+    df$ID <- id_label
+    df$Info <- info_val
+    df_2 <- subset(df,padj < 0.05 & abs(log2FoldChange) > 1 & padj != 0) 
+    #use subset to filter dataframes by columns
+    list_tables[[length(list_tables) + 1]] <- df_2
+  }
+}
+
+# Fusionner tous les tableaux 
+table_fusionnee <- bind_rows(list_tables)
+colnames(table_fusionnee)[1] <- "gene_id"
+
+# Aperçu ou sauvegarde
+print(head(table_fusionnee))
+#write_csv(table_fusionnee, "TopGO/Plant/table_fusionnee.csv")
+
+
+# Vérifier le nombre de gènes significatifs
+cat('Nombre de gènes différentiellement exprimés :',
+    nrow(table_fusionnee), '\\n')
+
+# Renommer les colonnes du fichier interproscan
+colnames(interproscan)[1:2] <- c('GeneID', 'GO')
+
+# Supprimer les lignes sans GO
+interproscan <- interproscan[!is.na(interproscan$GO) & interproscan$GO != '', ]
+write.csv(interproscan, "TopGO/Plant/GO_plant.txt", quote = F, row.names = TRUE)
+# Associer chaque gène à ses termes GO
+gene2GO <- split(interproscan$GO, interproscan$GeneID)
+gene2GO <- lapply(gene2GO, function(x) unique(unlist(strsplit(x, ';'))))
+
+# Définir l'univers des gènes et la liste binaire des gènes significatifs
+geneUniverse <- names(gene2GO)
+
+ont_list=c("BP", "MF", "CC")
+#BP = Biological Process, MF = Molecular Function, CC = Cellular Component
+```
+
+### Formalisations des données, tests et représentations graphiques
+
+```{r, label='unload', echo=FALSE, results='hide'}
+detach("package:ade4", unload = TRUE)
+```
+
+```{r, label='TopGO : Formalisations des données, tests et représentations graphiques Plant', echo=TRUE}
+for (i in unique(table_fusionnee$ID)){
+  table_trimmed = subset(table_fusionnee, ID == i)
+  up_table = subset(table_trimmed, log2FoldChange >= 1)
+  down_table = subset(table_trimmed, log2FoldChange <= -1)
+  geneList_up <- factor(as.integer(geneUniverse %in% up_table$gene_id), 
+                        levels = c(0, 1))
+  geneList_down <- factor(as.integer(geneUniverse %in% down_table$gene_id),
+                          levels = c(0, 1))
+  
+  for (y in ont_list){
+    condition = i
+    orga = table_fusionnee$Info[i]
+    ontology = y
+    
+    table(geneList_up)
+    #check you have significant genes inside the geneUniverse
+    names(geneList_up) <- geneUniverse
+    table(geneList_down)
+    #check you have significant genes inside the geneUniverse
+    names(geneList_down) <- geneUniverse
+    
+    # Initialiser l’objet topGO
+    GOdata_up <- new('topGOdata',
+        description = "Enrichment analysis",
+        ontology = y, 
+        allGenes = geneList_up,
+        annot = annFUN.gene2GO,
+        geneSelectionFun = function(x) x == 1,
+        gene2GO = gene2GO,
+        nodeSize = 5)
+    GOdata_down <- new('topGOdata',
+        description = "Enrichment analysis",
+        ontology = y, 
+        allGenes = geneList_down,
+        annot = annFUN.gene2GO,
+        geneSelectionFun = function(x) x == 1,
+        gene2GO = gene2GO,
+        nodeSize = 5)
+    
+    # TEST D’ENRICHISSEMENT GO 
+    resultFisher_wheight01 <- runTest(GOdata_up, algorithm = 'weight01',
+                                      statistic = 'fisher')
+    pValueFisher_wheight01 <- score(resultFisher_wheight01)
+    
+    resultFisher_classic <- runTest(GOdata_up, algorithm = 'classic',
+                                    statistic = 'fisher')
+    pValueFisher_classic <- score(resultFisher_classic)
+    
+    # Obtenir les résultats
+    GOtable_up <- GenTable(GOdata_up, p.value = resultFisher_wheight01,
+                           orderBy = 'p.value', topNodes = 20)
+    GOtable_up$condition <- condition
+    GOtable_up$ontology <- ontology
+    GOtable_up$Orga <- "plante"
+    
+    # Sauvegarder les résultats
+    write.table(GOtable_up, paste('TopGO/Plant/TopGO_Up/topGO_results_up_', i, 
+                                '_', y, '.tsv'), sep = '\t',
+              row.names = FALSE)
+    
+    allRes <- GenTable(GOdata_up, classic = resultFisher_classic, 
+                       weight = resultFisher_wheight01, orderBy = "weight", 
+                       ranksOf = "weight", topNodes = 20)
+    knitr::kable(allRes)
+    GO.res <- showSigOfNodes(GOdata_up, score(resultFisher_classic), 
+                             firstSigNodes = 20, useInfo = 'all')
+
+    resultFisher_wheight01 <- runTest(GOdata_down, algorithm = 'weight01',
+                                      statistic = 'fisher')
+    pValueFisher_wheight01 <- score(resultFisher_wheight01)
+    
+    resultFisher_classic <- runTest(GOdata_down, algorithm = 'classic', 
+                                    statistic = 'fisher')
+    pValueFisher_classic <- score(resultFisher_classic)
+    
+    # Obtenir les résultats
+    GOtable_down <- GenTable(GOdata_up, p.value = resultFisher_wheight01, 
+                             orderBy = 'p.value', topNodes = 20)
+    
+    GOtable_down$condition <- condition
+    GOtable_down$ontology <- ontology
+    GOtable_down$Orga <- "plante"
+    
+    # Sauvegarder les résultats
+    write.table(GOtable_down, paste('TopGO/Plant/TopGO_Down/topGO_results_down_', i, 
+                                '_', y, '.tsv'), sep = '\t',
+              row.names = FALSE)    
+    # VISUALISATION 
+    GOtable_up_filt <- GOtable_up[as.numeric(GOtable_up$p.value) < 0.05, ]
+    GOtable_down_filt <- GOtable_down[as.numeric(GOtable_down$p.value) < 0.05, ]
+    # S'assurer que p.value est bien numérique
+    GOtable_up_filt$p.value <- as.numeric(GOtable_up_filt$p.value)
+    GOtable_down_filt$p.value <- as.numeric(GOtable_down_filt$p.value)
+    
+    # Ajouter une étiquette pour distinguer Up et Down
+    GOtable_up_filt$Direction <- "Up"
+    GOtable_down_filt$Direction <- "Down"
+    
+    # Ajouter la colonne inv_pvalue
+    GOtable_up_filt$inv_pvalue <- GOtable_up_filt$p.value         
+    # pour les up → identique
+    GOtable_down_filt$inv_pvalue <- 1 / GOtable_down_filt$p.value 
+    # pour les down → inversée
+    
+    # Fusionner les deux
+    GOtable_filt <- rbind(GOtable_up_filt, GOtable_down_filt)
+    write.table(GOtable_filt, paste('TopGO/Plant/topGO_results_', i, 
+                                '_', y, '.tsv'), sep = '\t',
+              row.names = FALSE) 
+    
+    # Tracé avec ggplot
+    g <- ggplot(GOtable_filt, aes(x = reorder(Term, 
+                                              -log10(as.numeric(inv_pvalue))), 
+       y = -log10(as.numeric(inv_pvalue)))) +
+       geom_bar(stat = 'identity', fill = '#00a3a6') +
+       geom_hline(yintercept = -log10(0.05), color = 'red', linetype = 'dashed', 
+                  linewidth = 1) +
+       geom_hline(yintercept = -log10(1/0.05), color = 'red', 
+                  linetype = 'dashed', 
+                  linewidth = 1) +
+       geom_hline(yintercept = 0, color = 'white', linewidth = 0.5) +
+       coord_flip() +
+       labs(x = 'Termes GO', y = '-log10[p-value]', 
+            title = i)
+    print(g)
+    ggsave(paste("TopGO/Plant/topGO_results_", i, '_', y, '.pdf'), plot = g)
+    allRes <- GenTable(GOdata_down, classic = resultFisher_classic, 
+                       weight = resultFisher_wheight01, orderBy = "weight", 
+                       ranksOf = "weight", topNodes = 20)
+    knitr::kable(allRes)
+    GO.res <- showSigOfNodes(GOdata_down,  topGO::score(resultFisher_classic), 
+                             firstSigNodes = 20, useInfo = 'all')
+  }
+}
+```
+
+## Insect
+
+### Import des données pour l'analyse TopGO sur les échantillons issus des insect
+
+```{r, label='import data for TopGO analysis on insect', echo=TRUE}
+# Annotations GO (InterProScan)
+interproscan <- read.delim('TopGO/Insect/gene_GO_insect.txt', 
+   header = FALSE, sep = '\t')
+head(interproscan)
+
+interproscan$V1 <- vapply(interproscan$V1, 
+                          function(x) gsub('_orf[0-9]+', '', x), character(1))
+#take out the orf part
+
+interproscan <- as.data.frame(interproscan)
+head(interproscan)
+# Vérifier la structure des fichiers
+if (ncol(interproscan) < 2) 
+  stop('Erreur : Le fichier interproscan semble mal formaté.')
+
+# Définir la liste des conditions d’intérêt
+select_cond=c("B_t1_Q11L, B_t1_Q11V_L", "B_t1_Q21L, B_t1_Q21V_L", "B_t2_Q11L,
+              B_t2_Q11V_L", "B_t2_Q21L, B_t2_Q21V_L", "B_t1_Q11V_L, 
+              B_t2_Q11V_L", "B_t1_Q21V_L, B_t2_Q21V_L", "B_t1_Q11L, B_t2_Q11L",
+              "B_t1_Q21L, B_t2_Q21L", "B_t1_Q11L, B_t1_Q21L", "B_t1_Q11V_L,
+              B_t1_Q21V_L", "B_t2_Q11L, B_t2_Q21L", "B_t2_Q11V_L, B_t2_Q21V_L")
+
+# Lire les lignes du fichier contenant les chemins et infos 
+lines_raw <- readLines("TopGO/Insect/liste_deseq.txt")
+
+# Initialiser une liste de résultats 
+chemins_trouves <- data.frame(ID1 = character(),
+                              ID2 = character(),
+                              chemin = character(),
+                              info = character(),
+                              stringsAsFactors = FALSE)
+
+# Recherche des lignes correspondantes à chaque couple
+for (cond in select_cond) {
+  ids <- str_split(cond, ",\\s*")[[1]]
+  id1 <- ids[1]
+  id2 <- ids[2]
+  
+  # Match la ligne contenant les deux identifiants dans le nom du fichier
+  match_lines <- lines_raw[str_detect(lines_raw, fixed(id1)) & 
+                             str_detect(lines_raw, fixed(id2))]
+  
+  for (line in match_lines) {
+    # Séparer le chemin et l'info
+    parts <- str_split(line, ",\\s*")[[1]]
+    chemin <- parts[1]
+    info <- ifelse(length(parts) > 1, parts[2], NA)
+
+    if (!is.na(chemin) && file.exists(chemin)) {
+      chemins_trouves <- rbind(
+        chemins_trouves,
+        data.frame(ID1 = id1, ID2 = id2, chemin = chemin, info = info, 
+                   stringsAsFactors = FALSE)
+      )
+    } else {
+      warning(paste("Fichier introuvable ou chemin invalide:", chemin))
+    }
+  }
+}
+
+# Importer et annoter les tableaux
+list_tables <- list()
+
+for (i in 1:nrow(chemins_trouves)) {
+  path <- chemins_trouves$chemin[i]
+  id_label <- paste(chemins_trouves$ID1[i], chemins_trouves$ID2[i], 
+                    sep = "_VS_")
+  info_val <- chemins_trouves$info[i]
+
+  df <- tryCatch({
+    read_delim(path, delim = ",", show_col_types = FALSE)
+  }, error = function(e) {
+    warning(paste("Erreur lors de l'import:", path))
+    return(NULL)
+  })
+
+  if (!is.null(df)) {
+    df$ID <- id_label
+    df$Info <- info_val
+    df_2 <- subset(df,padj < 0.05 & abs(log2FoldChange) > 1 & padj != 0) 
+    #use subset to filter dataframes by columns
+    list_tables[[length(list_tables) + 1]] <- df_2
+  }
+}
+
+# Fusionner tous les tableaux 
+table_fusionnee <- bind_rows(list_tables)
+colnames(table_fusionnee)[1] <- "gene_id"
+
+# Aperçu ou sauvegarde
+print(head(table_fusionnee))
+#write_csv(table_fusionnee, "TopGO/Insect/table_fusionnee.csv")
+
+
+# Vérifier le nombre de gènes significatifs
+cat('Nombre de gènes différentiellement exprimés :',
+    nrow(table_fusionnee), '\\n')
+
+# Renommer les colonnes du fichier interproscan
+colnames(interproscan)[1:2] <- c('GeneID', 'GO')
+
+# Supprimer les lignes sans GO
+interproscan <- interproscan[!is.na(interproscan$GO) & interproscan$GO != '', ]
+write.csv(interproscan, "TopGO/Insect/GO_insect.txt", quote = F, row.names = F)
+# Associer chaque gène à ses termes GO
+gene2GO <- split(interproscan$GO, interproscan$GeneID)
+gene2GO <- lapply(gene2GO, function(x) unique(unlist(strsplit(x, ';'))))
+
+# Définir l'univers des gènes et la liste binaire des gènes significatifs
+geneUniverse <- names(gene2GO)
+
+ont_list=c("BP", "MF", "CC")
+#BP = Biological Process, MF = Molecular Function, CC = Cellular Component
+```
+
+### Formalisations des données, tests et représentations graphiques
+
+```{r, label='TopGO : Formalisations des données, tests et représentations graphiques Insect', echo=TRUE}
+for (i in unique(table_fusionnee$ID)){
+  table_trimmed = subset(table_fusionnee, ID == i)
+  up_table = subset(table_trimmed, log2FoldChange >= 1)
+  down_table = subset(table_trimmed, log2FoldChange <= -1)
+  geneList_up <- factor(as.integer(geneUniverse %in% up_table$gene_id),
+                        levels = c(0, 1))
+  geneList_down <- factor(as.integer(geneUniverse %in% down_table$gene_id),
+                          levels = c(0, 1))
+
+  for (y in ont_list){
+    condition = i
+    orga = table_fusionnee$Info[i]
+    ontology = y
+
+    names(geneList_up) <- geneUniverse
+    names(geneList_down) <- geneUniverse
+    
+    # Création des objets topGO
+    GOdata_up <- new('topGOdata',
+        description = "Enrichment analysis",
+        ontology = y, 
+        allGenes = geneList_up,
+        annot = annFUN.gene2GO,
+        geneSelectionFun = function(x) x == 1,
+        gene2GO = gene2GO,
+        nodeSize = 5)
+    GOdata_down <- new('topGOdata',
+        description = "Enrichment analysis",
+        ontology = y, 
+        allGenes = geneList_down,
+        annot = annFUN.gene2GO,
+        geneSelectionFun = function(x) x == 1,
+        gene2GO = gene2GO,
+        nodeSize = 5)
+
+    # UP
+    resultFisher_up_w01 <- runTest(GOdata_up, algorithm = 'weight01',
+                                   statistic = 'fisher')
+    resultFisher_up_classic <- runTest(GOdata_up, algorithm = 'classic',
+                                       statistic = 'fisher')
+    GOtable_up <- GenTable(GOdata_up, p.value = resultFisher_up_w01,
+                           orderBy = 'p.value', topNodes = 20)
+    GOtable_up$state <- "up"
+    GOtable_up$condition <- condition
+    GOtable_up$ontology <- ontology
+    GOtable_up$orga <- "insecte"
+    write.csv(GOtable_up, paste0('TopGO/Insect/TopGO_Up/topGO_results_up_',
+                                 i, '_', y, '.csv'), row.names = FALSE)
+    allRes <- GenTable(GOdata_down, classic = resultFisher_up_classic, 
+                       weight = resultFisher_up_w01, orderBy = "weight", 
+                       ranksOf = "weight", topNodes = 20)
+    knitr::kable(allRes)
+    GO.res <- showSigOfNodes(GOdata_up, score(resultFisher_up_classic), 
+                             firstSigNodes = 20, useInfo = 'all')
+
+    # DOWN
+    resultFisher_down_w01 <- runTest(GOdata_down, algorithm = 'weight01',
+                                     statistic = 'fisher')
+    resultFisher_down_classic <- runTest(GOdata_down, algorithm = 'classic',
+                                         statistic = 'fisher')
+    GOtable_down <- GenTable(GOdata_down, p.value = resultFisher_down_w01,
+                             orderBy = 'p.value', topNodes = 20)
+    GOtable_down$state <- "down"
+    GOtable_down$condition <- condition
+    GOtable_down$ontology <- ontology
+    GOtable_down$orga <- "insecte"
+    write.csv(GOtable_down, paste0('TopGO/Insect/TopGO_Down/topGO_results_down_',
+                                   i, '_', y, '.csv'), row.names = FALSE)
+
+    # FILTRER p.value
+    GOtable_up_filt <- GOtable_up[as.numeric(GOtable_up$p.value) < 0.05, ]
+    GOtable_down_filt <- GOtable_down[as.numeric(GOtable_down$p.value) < 0.05, ]
+
+    if (nrow(GOtable_up_filt) == 0 && nrow(GOtable_down_filt) == 0) {
+      next  # passer à la prochaine itération du for(y in ont_list)
+    }
+
+    # Ajouter colonne Direction et inv_pvalue
+    if (nrow(GOtable_up_filt) > 0) {
+      GOtable_up_filt$Direction <- "Up"
+      GOtable_up_filt$p.value <- as.numeric(GOtable_up_filt$p.value)
+      GOtable_up_filt$inv_pvalue <- GOtable_up_filt$p.value
+    }
+
+    if (nrow(GOtable_down_filt) > 0) {
+      GOtable_down_filt$Direction <- "Down"
+      GOtable_down_filt$p.value <- as.numeric(GOtable_down_filt$p.value)
+      GOtable_down_filt$inv_pvalue <- 1 / GOtable_down_filt$p.value
+    }
+
+    # Fusionner uniquement ceux qui existent
+    GOtable_filt <- rbind(
+      if (exists("GOtable_up_filt")) GOtable_up_filt else NULL,
+      if (exists("GOtable_down_filt")) GOtable_down_filt else NULL
+    )
+
+    # Tracer
+    g <- ggplot(GOtable_filt, aes(x = reorder(Term, -log10(
+      as.numeric(inv_pvalue))), 
+                                  y = -log10(as.numeric(inv_pvalue)))) +
+      geom_bar(stat = 'identity', fill = '#00a3a6') +
+      geom_hline(yintercept = -log10(0.05), color = 'red', linetype = 
+                   'dashed', linewidth = 1) +
+      geom_hline(yintercept = -log10(1 / 0.05), color = 'red', linetype = 
+                   'dashed', linewidth = 1) +
+      geom_hline(yintercept = 0, color = 'white', linewidth = 0.5) +
+      coord_flip() +
+      labs(x = 'Termes GO', y = '-log10[p-value]', title = i)
+    print(g)
+    ggsave(paste0("TopGO/Insect/topGO_results_", i, '_', y, '.pdf'), plot = g)
+    allRes <- GenTable(GOdata_down, classic = resultFisher_down_classic, 
+                       weight = resultFisher_down_w01, orderBy = "weight", 
+                       ranksOf = "weight", topNodes = 20)
+    knitr::kable(allRes)
+    GO.res <- showSigOfNodes(GOdata_down, topGO::score(resultFisher_down_classic), 
+                             firstSigNodes = 20, useInfo = 'all')
+  }
+}
+```
+
+# ClusterProfiler analysis
+
+## Plant
+
+### Import des données pour l'analyse TopGO sur les échantillons issus des plantes
+
+```{r, label='import data for ClusterProfiler analysis on plant', echo=TRUE}
+# Définir la liste des conditions d’intérêt
+select_cond <- c(
+  "P_t1_Q11L, P_t1_Q11V_L",
+  "P_t1_Q21L, P_t1_Q21V_L",
+  "P_t2_Q11L, P_t2_Q11V_L",
+  "P_t2_Q21L, P_t2_Q21V_L",
+  "P_t1_Q11V_L, P_t2_Q11V_L",
+  "P_t1_Q21V_L, P_t2_Q21V_L",
+  "P_t1_Q11L, P_t2_Q11L",
+  "P_t1_Q21L, P_t2_Q21L",
+  "P_t1_Q11L, P_t1_Q21L",
+  "P_t1_Q11V_L, P_t1_Q21V_L",
+  "P_t2_Q11L, P_t2_Q21L",
+  "P_t2_Q11V_L, P_t2_Q21V_L"
+)
+
+# Lire les lignes du fichier contenant les chemins et infos 
+lines_raw <- readLines("TopGO/Plant/liste_deseq.txt")
+
+# Initialiser une liste de résultats 
+chemins_trouves <- data.frame(ID1 = character(),
+                              ID2 = character(),
+                              chemin = character(),
+                              info = character(),
+                              stringsAsFactors = FALSE)
+
+# Recherche des lignes correspondantes à chaque couple
+for (cond in select_cond) {
+  ids <- str_split(cond, ",\\s*")[[1]]
+  id1 <- ids[1]
+  id2 <- ids[2]
+  
+  # Match la ligne contenant les deux identifiants dans le nom du fichier
+  match_lines <- lines_raw[str_detect(lines_raw, fixed(id1)) & 
+                             str_detect(lines_raw, fixed(id2))]
+  
+  for (line in match_lines) {
+    # Séparer le chemin et l'info
+    parts <- str_split(line, ",\\s*")[[1]]
+    chemin <- parts[1]
+    info <- ifelse(length(parts) > 1, parts[2], NA)
+
+    if (!is.na(chemin) && file.exists(chemin)) {
+      chemins_trouves <- rbind(
+        chemins_trouves,
+        data.frame(ID1 = id1, ID2 = id2, chemin = chemin, info = info, 
+                   stringsAsFactors = FALSE)
+      )
+    } else {
+      warning(paste("Fichier introuvable ou chemin invalide:", chemin))
+    }
+  }
+}
+
+# Importer et annoter les tableaux
+list_tables <- list()
+
+for (i in 1:nrow(chemins_trouves)) {
+  path <- chemins_trouves$chemin[i]
+  id_label <- paste(chemins_trouves$ID1[i], chemins_trouves$ID2[i], 
+                    sep = "_VS_")
+  info_val <- chemins_trouves$info[i]
+
+  df <- tryCatch({
+    read_delim(path, delim = ",", show_col_types = FALSE)
+  }, error = function(e) {
+    warning(paste("Erreur lors de l'import:", path))
+    return(NULL)
+  })
+
+  if (!is.null(df)) {
+    df$ID <- id_label
+    df$Info <- info_val
+    df_2 <- subset(df,padj < 0.05 & abs(log2FoldChange) > 1 & padj != 0) 
+    #use subset to filter dataframes by columns
+    list_tables[[length(list_tables) + 1]] <- df_2
+  }
+}
+
+# Fusionner tous les tableaux 
+table_fusionnee <- bind_rows(list_tables)
+colnames(table_fusionnee)[1] <- "gene_id"
+
+# Aperçu ou sauvegarde
+print(head(table_fusionnee))
+#write_csv(table_fusionnee, "TopGO/Plant/table_fusionnee.csv")
+
+# Mapping gènes → KO
+ko_map <- read.delim("TopGO/resultats_concat_final_kegg.tsv", header = TRUE)
+
+table_fusionnee$KO <- NA
+
+# Pour chaque ligne de ko_table, 
+#on cherche l'identifiant dans les gene_id de deg_ko
+for(i in seq_len(nrow(ko_map))) {
+  pattern <- ko_map$gene_id[i]
+  match_index <- str_detect(table_fusionnee$gene_id, fixed(pattern))  
+  
+  # Vérifier si on a trouvé une correspondance avant d'affecter une valeur
+  if (any(match_index)) {
+    table_fusionnee$KO[match_index] <- ko_map$ko[i]
+  } 
+}
+```
+
+### Formalisations des données, tests et représentations graphiques
+
+```{r, label='ClusterProfiler : Formalisations des données, tests et représentations graphiques Plant', echo=FALSE}
+for (i in unique(table_fusionnee$ID)){
+  table_trimmed = subset(table_fusionnee, ID == i)
+  up_table = subset(table_trimmed, log2FoldChange >= 1)
+  down_table = subset(table_trimmed, log2FoldChange <= -1)
+  ko_list_up <- unique(up_table$KO)
+  ko_list_up <- na.omit(ko_list_up)
+  ko_list_down <- unique(down_table$KO)
+  ko_list_down <- na.omit(ko_list_down)
+  
+  for (y in ont_list){
+    condition = i
+    
+    table(ko_list_up)
+    #check you have significant genes inside the geneUniverse, is the 1
+    table(ko_list_down)
+    #check you have significant genes inside the geneUniverse, is the 1
+    
+    # Initialiser l’objet EnrichR
+    enrich_result_up <- enrichKEGG(gene = ko_list_up, organism = 'ko',
+                                   keyType = "kegg")
+    enrich_result_down <- enrichKEGG(gene = ko_list_down, organism = 'ko',
+                                     keyType = "kegg")
+    enrich_result_up@result
+    enrich_result_down@result
+    
+    KOtable_up_filt <- enrich_result_up@result[as.numeric(
+      enrich_result_up@result$p.adjust) < 0.05, ]
+    KOtable_down_filt <- enrich_result_down@result[as.numeric(
+      enrich_result_down@result$p.adjust) < 0.05, ]
+    
+    # Écriture des résultats dans un fichier CSV
+#     write_tsv(KOtable_up_filt, paste(
+#       'F:/Stages/Stage_RNAseq_CBGP_2025/R/TopGO/Plant/enrichr_results_', 
+#                                      condition, '_up.tsv'), quote = "none")
+#     write_tsv(KOtable_down_filt, paste(
+#    'F:/Stages/Stage_RNAseq_CBGP_2025/R/TopGO/Plant/enrichr_results_', 
+#                                        condition, '_down.tsv'), quote = "none")
+    
+    # VISUALISATION DES RÉSULTATS ----------------------------------------------
+    if (nrow(KOtable_up_filt) == 0 && nrow(KOtable_down_filt) == 0) {
+    next  # passer à la prochaine itération du for(y in ont_list)
+    }
+
+    # Ajouter colonne Direction et inv_pvalue
+    if (nrow(KOtable_up_filt) > 0) {
+      KOtable_up_filt$Direction <- "Up"
+      KOtable_up_filt$p.adjust <- as.numeric(KOtable_up_filt$p.adjust)
+      KOtable_up_filt$inv_pvalue <- KOtable_up_filt$p.adjust
+    }
+
+    if (nrow(KOtable_down_filt) > 0) {
+      KOtable_down_filt$Direction <- "Down"
+      KOtable_down_filt$p.adjust <- as.numeric(KOtable_down_filt$p.adjust)
+      KOtable_down_filt$inv_pvalue <- 1 / KOtable_down_filt$p.adjust
+    }
+
+    # Fusionner uniquement ceux qui existent
+    KOtable_filt <- rbind(
+      if (exists("KOtable_up_filt")) KOtable_up_filt else NULL,
+      if (exists("KOtable_down_filt")) KOtable_down_filt else NULL
+    )
+
+    # Tracé avec ggplot
+    g <- ggplot(KOtable_filt, aes(x = reorder(subcategory, 
+                                            -log10(as.numeric(inv_pvalue))), 
+     y = -log10(inv_pvalue))) +
+     geom_bar(stat = 'identity', fill = 'steelblue') +
+     geom_hline(yintercept = -log10(0.05), color = 'red', linetype = 'dashed', 
+                linewidth = 1) +
+     geom_hline(yintercept = -log10(1/0.05), color = 'red', 
+                linetype = 'dashed', 
+                linewidth = 1) +
+     geom_hline(yintercept = 0, color = 'white', linewidth = 0.5) +
+     coord_flip() +
+     labs(x = 'Termes KO', y = '-log10(p-value)', title = condition) +
+     theme_minimal()
+    print(g)
+#    ggsave(paste('F:/Stages/Stage_RNAseq_CBGP_2025/R/TopGO/Plant/enrichr_',
+#                 condition, '.pdf'), plot = g)
+  }
+}
+```
+
+## Insect
+
+### Import des données pour l'analyse TopGO sur les échantillons issus des plantes
+
+```{r, label='import data for ClusterProfiler analysis on insect', echo=TRUE}
+# Définir la liste des conditions d’intérêt
+select_cond=c("B_t1_Q11L, B_t1_Q11V_L", "B_t1_Q21L, B_t1_Q21V_L", "B_t2_Q11L,
+              B_t2_Q11V_L", "B_t2_Q21L, B_t2_Q21V_L", "B_t1_Q11V_L, 
+              B_t2_Q11V_L", "B_t1_Q21V_L, B_t2_Q21V_L", "B_t1_Q11L, B_t2_Q11L",
+              "B_t1_Q21L, B_t2_Q21L", "B_t1_Q11L, B_t1_Q21L", "B_t1_Q11V_L,
+              B_t1_Q21V_L", "B_t2_Q11L, B_t2_Q21L", "B_t2_Q11V_L, B_t2_Q21V_L")
+
+# Lire les lignes du fichier contenant les chemins et infos 
+lines_raw <- readLines("TopGO/Insect/liste_deseq.txt")
+
+# Initialiser une liste de résultats 
+chemins_trouves <- data.frame(ID1 = character(),
+                              ID2 = character(),
+                              chemin = character(),
+                              info = character(),
+                              stringsAsFactors = FALSE)
+
+# Recherche des lignes correspondantes à chaque couple
+for (cond in select_cond) {
+  ids <- str_split(cond, ",\\s*")[[1]]
+  id1 <- ids[1]
+  id2 <- ids[2]
+  
+  # Match la ligne contenant les deux identifiants dans le nom du fichier
+  match_lines <- lines_raw[str_detect(lines_raw, fixed(id1)) & 
+                             str_detect(lines_raw, fixed(id2))]
+  
+  for (line in match_lines) {
+    # Séparer le chemin et l'info
+    parts <- str_split(line, ",\\s*")[[1]]
+    chemin <- parts[1]
+    info <- ifelse(length(parts) > 1, parts[2], NA)
+
+    if (!is.na(chemin) && file.exists(chemin)) {
+      chemins_trouves <- rbind(
+        chemins_trouves,
+        data.frame(ID1 = id1, ID2 = id2, chemin = chemin, info = info, 
+                   stringsAsFactors = FALSE)
+      )
+    } else {
+      warning(paste("Fichier introuvable ou chemin invalide:", chemin))
+    }
+  }
+}
+
+# Importer et annoter les tableaux
+list_tables <- list()
+
+for (i in 1:nrow(chemins_trouves)) {
+  path <- chemins_trouves$chemin[i]
+  id_label <- paste(chemins_trouves$ID1[i], chemins_trouves$ID2[i], 
+                    sep = "_VS_")
+  info_val <- chemins_trouves$info[i]
+
+  df <- tryCatch({
+    read_delim(path, delim = ",", show_col_types = FALSE)
+  }, error = function(e) {
+    warning(paste("Erreur lors de l'import:", path))
+    return(NULL)
+  })
+
+  if (!is.null(df)) {
+    df$ID <- id_label
+    df$Info <- info_val
+    df_2 <- subset(df,padj < 0.05 & abs(log2FoldChange) > 1 & padj != 0) 
+    #use subset to filter dataframes by columns
+    list_tables[[length(list_tables) + 1]] <- df_2
+  }
+}
+
+# Fusionner tous les tableaux 
+table_fusionnee <- bind_rows(list_tables)
+colnames(table_fusionnee)[1] <- "gene_id"
+
+# Aperçu ou sauvegarde
+print(head(table_fusionnee))
+#write_csv(table_fusionnee, "TopGO/Insect/table_fusionnee.csv")
+
+# Mapping gènes → KO
+ko_map <- read.delim("TopGO/resultats_concat_final_kegg.tsv", header = TRUE)
+
+table_fusionnee$KO <- NA
+# Pour chaque ligne de ko_table, 
+#on cherche l'identifiant dans les gene_id de deg_ko
+for(i in seq_len(nrow(ko_map))) {
+  pattern <- ko_map$gene_id[i]
+  match_index <- str_detect(table_fusionnee$gene_id, fixed(pattern))  
+  
+  # Vérifier si on a trouvé une correspondance avant d'affecter une valeur
+  if (any(match_index)) {
+    table_fusionnee$KO[match_index] <- ko_map$ko[i]
+  } 
+}
+```
+
+### Formalisations des données, tests et représentations graphiques
+
+```{r, label='ClusterProfiler : Formalisations des données, tests et représentations graphiques Insect', echo=FALSE}
+for (i in unique(table_fusionnee$ID)){
+  table_trimmed = subset(table_fusionnee, ID == i)
+  up_table = subset(table_trimmed, log2FoldChange >= 1)
+  down_table = subset(table_trimmed, log2FoldChange <= -1)
+  ko_list_up <- unique(up_table$KO)
+  ko_list_up <- na.omit(ko_list_up)
+  ko_list_down <- unique(down_table$KO)
+  ko_list_down <- na.omit(ko_list_down)
+  
+  for (y in ont_list){
+    condition = i
+    
+    table(ko_list_up)
+    #check you have significant genes inside the geneUniverse, is the 1
+    table(ko_list_down)
+    #check you have significant genes inside the geneUniverse, is the 1
+    
+    # Initialiser l’objet EnrichR
+    enrich_result_up <- enrichKEGG(gene = ko_list_up, organism = 'ko',
+                                   keyType = "kegg")
+    enrich_result_down <- enrichKEGG(gene = ko_list_down, organism = 'ko',
+                                     keyType = "kegg")
+    enrich_result_up@result
+    enrich_result_down@result
+    KOtable_up_filt <- enrich_result_up@result[as.numeric(
+      enrich_result_up@result$p.adjust) < 0.05, ]
+    KOtable_down_filt <- enrich_result_down@result[as.numeric(
+      enrich_result_down@result$p.adjust) < 0.05, ]
+    
+    # Écriture des résultats dans un fichier CSV
+#    write_tsv(KOtable_up_filt, paste(
+#      'F:/Stages/Stage_RNAseq_CBGP_2025/R/TopGO/Insect/enrichr_results_', 
+#                                     condition, '_up.tsv'), quote = "none")
+#    write_tsv(KOtable_down_filt, paste(
+#      'F:/Stages/Stage_RNAseq_CBGP_2025/R/TopGO/Insect/enrichr_results_', 
+#                                       condition, '_down.tsv'), quote = "none")
+    
+    # VISUALISATION DES RÉSULTATS ----------------------------------------------
+    if (nrow(KOtable_up_filt) == 0 && nrow(KOtable_down_filt) == 0) {
+    next  # passer à la prochaine itération du for(y in ont_list)
+    }
+
+    # Ajouter colonne Direction et inv_pvalue
+    if (nrow(KOtable_up_filt) > 0) {
+      KOtable_up_filt$Direction <- "Up"
+      KOtable_up_filt$p.adjust <- as.numeric(KOtable_up_filt$p.adjust)
+      KOtable_up_filt$inv_pvalue <- KOtable_up_filt$p.adjust
+    }
+
+    if (nrow(KOtable_down_filt) > 0) {
+      KOtable_down_filt$Direction <- "Down"
+      KOtable_down_filt$p.adjust <- as.numeric(KOtable_down_filt$p.adjust)
+      KOtable_down_filt$inv_pvalue <- 1 / KOtable_down_filt$p.adjust
+    }
+
+    # Fusionner uniquement ceux qui existent
+    KOtable_filt <- rbind(
+      if (exists("KOtable_up_filt")) KOtable_up_filt else NULL,
+      if (exists("KOtable_down_filt")) KOtable_down_filt else NULL
+    )
+
+    # Tracé avec ggplot
+    g <- ggplot(KOtable_filt, aes(x = reorder(subcategory, 
+                                            -log10(as.numeric(inv_pvalue))), 
+     y = -log10(inv_pvalue))) +
+     geom_bar(stat = 'identity', fill = 'steelblue') +
+     geom_hline(yintercept = -log10(0.05), color = 'red', linetype = 'dashed', 
+                linewidth = 1) +
+     geom_hline(yintercept = -log10(1/0.05), color = 'red', 
+                linetype = 'dashed', 
+                linewidth = 1) +
+     geom_hline(yintercept = 0, color = 'white', linewidth = 0.5) +
+     coord_flip() +
+     labs(x = 'Termes KO', y = '-log10(p-value)', title = condition) +
+     theme_minimal()
+    print(g)
+#    ggsave(paste('F:/Stages/Stage_RNAseq_CBGP_2025/R/TopGO/Insect/enrichr_',
+#                 condition, '.pdf'), plot = g)
+  }
+}
+```
+
+#UpSetR
+
+##Plant
+
+###Formalisation des données UpsetR
+
+```{r, label='import des données pour UpsetR représentation plante', echo=TRUE}
+# Liste de comparaison
+select_cond <- c("P_t1_Q11L, P_t1_Q11V_L", "P_t1_Q21L, P_t1_Q21V_L", "P_t2_Q11L,
+                 P_t2_Q11V_L", "P_t2_Q21L, P_t2_Q21V_L", "P_t1_Q11V_L, 
+                 P_t2_Q11V_L", "P_t1_Q21V_L, P_t2_Q21V_L", "P_t1_Q11L, 
+                 P_t2_Q11L", "P_t1_Q21L, P_t2_Q21L", "P_t1_Q11L, P_t1_Q21L", 
+                 "P_t1_Q11V_L, P_t1_Q21V_L", "P_t2_Q11L, P_t2_Q21L", 
+                 "P_t2_Q11V_L, P_t2_Q21V_L")
+
+list_sig_genes <- list()
+
+for (i in seq_along(select_cond)) {
+  ids <- strsplit(select_cond[i], ",\\s*")[[1]]
+  ID1 <- ids[1]
+  ID2 <- ids[2]
+  
+  res.F <- results(dds_tomato.deseq, contrast = c("condition", ID1, ID2))
+  res.F$padj <- p.adjust(res.F$pvalue, method = "fdr")
+  res.F <- res.F[order(res.F$padj), ]
+  
+  sig_genes_up <- rownames(res.F)[which(res.F$padj < 0.05 & res.F$log2FoldChange >= 1)]
+  sig_genes_down <- rownames(res.F)[which(res.F$padj < 0.05 & res.F$log2FoldChange <= -1)]
+  
+  name_comp <- paste0(ID1, "_vs_", ID2)
+  
+  df_up <- data.frame(gene = sig_genes_up, direction = "up", stringsAsFactors = FALSE)
+  df_down <- data.frame(gene = sig_genes_down, direction = "down", stringsAsFactors = FALSE)
+  
+  list_sig_genes[[name_comp]] <- rbind(df_up, df_down)
+}
+
+# Obtenir tous les gènes significatifs
+all_genes <- unique(unlist(lapply(list_sig_genes, function(df) df$gene)))
+
+# Créer le tableau final
+upset_data <- data.frame(gene = all_genes, stringsAsFactors = FALSE)
+
+# Ajouter les colonnes de comparaison (1/0) et direction (par majorité si unique)
+for (comp in names(list_sig_genes)) {
+  genes <- list_sig_genes[[comp]]
+  upset_data[[comp]] <- as.integer(upset_data$gene %in% genes$gene)
+}
+
+# Direction principale : si un gène est up ou down plus souvent
+direction_vector <- sapply(upset_data$gene, function(g) {
+  dirs <- unlist(lapply(list_sig_genes, function(df) {
+    if (g %in% df$gene) df$direction[df$gene == g] else NULL
+  }))
+  if (length(dirs) == 0) return(NA)
+  if (sum(dirs == "up") >= sum(dirs == "down")) return("up") else return("down")
+})
+
+upset_data$direction <- factor(direction_vector, levels = c("up", "down"))
+
+comparison_cols <- setdiff(colnames(upset_data), c("gene", "direction"))
+```
+
+###Représentation graphique
+
+```{r, label='UpsetR : représentations graphiques Plante', echo=TRUE}
+#pdf("upset_plante.pdf")
+ComplexUpset::upset(
+  upset_data,
+  intersect = comparison_cols,
+  base_annotations = list(
+    'Intersection size' = (
+      intersection_size(aes(fill = direction)) +
+      scale_fill_manual(values = c("up" = "red", "down" = "blue"))
+    )
+  ),
+  min_size = 10,
+#  n_intersections = 20
+)
+#dev.off()
+```
+
+##Insect
+ 
+###Formalisation des données Upset
+
+```{r, label='import des données pour UpsetR représentation insecte', echo=TRUE}
+select_cond=c("B_t1_Q11L, B_t1_Q11V_L", "B_t1_Q21L, B_t1_Q21V_L", "B_t2_Q11L,
+              B_t2_Q11V_L", "B_t2_Q21L, B_t2_Q21V_L", "B_t1_Q11V_L, 
+              B_t2_Q11V_L", "B_t1_Q21V_L, B_t2_Q21V_L", "B_t1_Q11L, B_t2_Q11L",
+              "B_t1_Q21L, B_t2_Q21L", "B_t1_Q11L, B_t1_Q21L", "B_t1_Q11V_L,
+              B_t1_Q21V_L", "B_t2_Q11L, B_t2_Q21L", "B_t2_Q11V_L, B_t2_Q21V_L")
+
+list_sig_genes <- list()
+
+for (i in seq_along(select_cond)) {
+  ids <- strsplit(select_cond[i], ",\\s*")[[1]]
+  ID1 <- ids[1]
+  ID2 <- ids[2]
+  
+  res.F <- results(dds_bemisia.deseq, contrast = c("condition", ID1, ID2))
+  res.F$padj <- p.adjust(res.F$pvalue, method = "fdr")
+  res.F <- res.F[order(res.F$padj), ]
+  
+  sig_genes_up <- rownames(res.F)[which(res.F$padj < 0.05 & res.F$log2FoldChange >= 1)]
+  sig_genes_down <- rownames(res.F)[which(res.F$padj < 0.05 & res.F$log2FoldChange <= -1)]
+  
+  name_comp <- paste0(ID1, "_vs_", ID2)
+  
+  df_up <- data.frame(gene = sig_genes_up, direction = "up", stringsAsFactors = FALSE)
+  df_down <- data.frame(gene = sig_genes_down, direction = "down", stringsAsFactors = FALSE)
+  
+  list_sig_genes[[name_comp]] <- rbind(df_up, df_down)
+}
+
+# Obtenir tous les gènes significatifs
+all_genes <- unique(unlist(lapply(list_sig_genes, function(df) df$gene)))
+
+# Créer le tableau final
+upset_data <- data.frame(gene = all_genes, stringsAsFactors = FALSE)
+
+# Ajouter les colonnes de comparaison (1/0) et direction (par majorité si unique)
+for (comp in names(list_sig_genes)) {
+  genes <- list_sig_genes[[comp]]
+  upset_data[[comp]] <- as.integer(upset_data$gene %in% genes$gene)
+}
+
+# Direction principale : si un gène est up ou down plus souvent
+direction_vector <- sapply(upset_data$gene, function(g) {
+  dirs <- unlist(lapply(list_sig_genes, function(df) {
+    if (g %in% df$gene) df$direction[df$gene == g] else NULL
+  }))
+  if (length(dirs) == 0) return(NA)
+  if (sum(dirs == "up") >= sum(dirs == "down")) return("up") else return("down")
+})
+
+upset_data$direction <- factor(direction_vector, levels = c("up", "down"))
+
+comparison_cols <- setdiff(colnames(upset_data), c("gene", "direction"))
+```
+
+###Représentation graphique
+
+```{r, label='UpsetR : représentations graphiques Insecte', echo=TRUE}
+#pdf("upset_insect.pdf")
+ComplexUpset::upset(
+  upset_data,
+  intersect = comparison_cols,
+  base_annotations = list(
+    'Intersection size' = (
+      intersection_size(aes(fill = direction)) +
+      scale_fill_manual(values = c("up" = "red", "down" = "blue"))
+    )
+  ),
+  min_size = 10,
+#  n_intersections = 20
+)
+#dev.off()
+```
