@@ -2,33 +2,33 @@
 #SBATCH --job-name=kraken_job          # Nom du job
 #SBATCH --output=kraken_output_%j.log  # Fichier de sortie
 #SBATCH --error=kraken_error_%j.log    # Fichier d'erreur
-#SBATCH --ntasks=1                     # Nombre de t‚ches (processus)
-#SBATCH --cpus-per-task=32             # Nombre de cúurs par t‚che
-#SBATCH --mem=128G                     # MÈmoire par t‚che
-#SBATCH --time=2-00:00:00              # Temps d'exÈcution maximum (HH:MM:SS)
-#SBATCH --partition=workq              # Partition ‡ utiliser
+#SBATCH --ntasks=1                     # Nombre de t√¢ches (processus)
+#SBATCH --cpus-per-task=32             # Nombre de c≈ìurs par t√¢che
+#SBATCH --mem=128G                     # M√©moire par t√¢che
+#SBATCH --time=2-00:00:00              # Temps d'ex√©cution maximum (HH:MM:SS)
+#SBATCH --partition=workq              # Partition √† utiliser
 
-# Charger les modules nÈcessaires
+# Charger les modules n√©cessaires
 module load devel/python/Python-3.11.1
 module load bioinfo/Kraken2/2.1.2 
 module load bioinfo/Krona/2.8.1
 module load bioinfo/KrakenTools/d4a2fbe 
 
-# DÈfinir les chemins des fichiers d'entrÈe et de sortie
-READS_1="fichier d'entrÈe 1 en .fastq"
-READS_2="fichier d'entrÈe 2 en .fastq"
-READS_3="fichier d'entrÈe 3 en .fasta"
+# D√©finir les chemins des fichiers d'entr√©e et de sortie
+READS_1="fichier d'entr√©e 1 en .fastq"
+READS_2="fichier d'entr√©e 2 en .fastq"
+READS_3="fichier d'entr√©e 3 en .fasta"
 OUTPUT_DIR="dossier de sortie 1"
 OUTPUT_DIR_2="dossier de sortie 2"
 DB_PATH="/home/dsantos/save/Kraken2DB/hemipteraDB/"
 taxon="symbiote_extract" #laisser le "_extract"
 taxon_ID="X" #tomato = 4070, bemisia = 6656, wolbachia = 942, rickettsia = 775, arsenophonus = 1903414, cardinium = 768503, TYLCV = 10814, portiera = 3399795, hamiltonella = 543, homme = 9443 
 
-# CrÈer le rÈpertoire de sortie s'il n'existe pas
+# Cr√©er le r√©pertoire de sortie s'il n'existe pas
 mkdir -p $OUTPUT_DIR
 mkdir -p $OUTPUT_DIR_2
 
-# ExÈcuter Kraken
+# Ex√©cuter Kraken
 kraken2 --paired $READS_1 $READS_2 --db $DB_PATH --threads 30 --output $OUTPUT_DIR/results.class $READS --report $OUTPUT_DIR/report.report
 
 ktImportTaxonomy -i -q 2 -t 3 -o $OUTPUT_DIR/report.html $OUTPUT_DIR/report.report
