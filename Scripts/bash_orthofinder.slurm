@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=instal_geno_maelc          # Nom du travail
-#SBATCH --ntasks=1                            # Nombre de t‚ches (processus)
-#SBATCH --cpus-per-task=32                    # Nombre de CPU par t‚che
-#SBATCH --mem=128G                            # MÈmoire par núud
-#SBATCH --time=4-00:00:00                     # Temps maximum d'exÈcution (HH:MM:SS)
+#SBATCH --ntasks=1                            # Nombre de t√¢ches (processus)
+#SBATCH --cpus-per-task=32                    # Nombre de CPU par t√¢che
+#SBATCH --mem=128G                            # M√©moire par n≈ìud
+#SBATCH --time=4-00:00:00                     # Temps maximum d'ex√©cution (HH:MM:SS)
 #SBATCH --output=output_%j.log                # Fichier de sortie
 #SBATCH --error=error_%j.log                  # Fichier d'erreur
 #SBATCH --partition=workq                     # Nom de la partition
@@ -11,9 +11,9 @@
 module load devel/Miniconda/Miniconda3
 #module load bioinfo/SeqKit/2.9.0
 
-#INPUT_REF="fichier d'entrÈe reference en .faa"
-#INPUT_BIS="fichier d'entrÈe complÈmentaire en .faa"
-#INPUT_TRIS="fichier d'entrÈe complÈmentaire 2 (si nÈcessaire) en .fna"
+#INPUT_REF="fichier d'entr√©e reference en .faa"
+#INPUT_BIS="fichier d'entr√©e compl√©mentaire en .faa"
+#INPUT_TRIS="fichier d'entr√©e compl√©mentaire 2 (si n√©cessaire) en .fna"
 #OUTPUT_FASTA="dossier de sortie"
 
 #seqkit fx2tab -i -n -s -H $INPUT_REF | seqkit tab2fx -o $OUTPUT_FASTA/protein_ref.fasta
@@ -26,10 +26,10 @@ module load devel/Miniconda/Miniconda3
 
 module load bioinfo/OrthoFinder/2.5.5
 
-INPUT="dossier d'entrÈe"
+INPUT="dossier d'entr√©e"
 OUTPUT="dossier de sortie"
 
-orthofinder -d -f $INPUT -o $OUTPUT -T "iqtree" -I 1.5 -M msa -t 4 #-I granularity = cut-off between the different orthogroups (plus c est haut plus les informations seront prÈcises)
+orthofinder -d -f $INPUT -o $OUTPUT -T "iqtree" -I 1.5 -M msa -t 4 #-I granularity = cut-off between the different orthogroups (plus c est haut plus les informations seront pr√©cises)
 
 module unload bioinfo/OrthoFinder/2.5.5
 module unload devel/Miniconda/Miniconda3
