@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=hisat2_test_maelc          # Nom du travail
-#SBATCH --ntasks=1                            # Nombre de t‚ches (processus)
-#SBATCH --cpus-per-task=2                     # Nombre de CPU par t‚che
-#SBATCH --mem=128G                            # MÈmoire par núud
-#SBATCH --time=4-00:00:00                     # Temps maximum d'exÈcution (HH:MM:SS)
+#SBATCH --ntasks=1                            # Nombre de t√¢ches (processus)
+#SBATCH --cpus-per-task=2                     # Nombre de CPU par t√¢che
+#SBATCH --mem=128G                            # M√©moire par n≈ìud
+#SBATCH --time=4-00:00:00                     # Temps maximum d'ex√©cution (HH:MM:SS)
 #SBATCH --output=/dev/null                    # Fichier de sortie
 #SBATCH --error=error_%j.log                  # Fichier d'erreur
 #SBATCH --partition=workq                     # Nom de la partition
@@ -13,14 +13,14 @@
 module load bioinfo/HISAT2/2.2.1
 module load bioinfo/samtools/1.20
 
-# DÈfinir les variables
+# D√©finir les variables
 GENOME_INDEX="dossier index"
 
-READ_DIR="dossier d'entrÈe"
+READ_DIR="dossier d'entr√©e"
 
 OUTPUT_DIR="dossier de sortie"
 
-# CrÈer le rÈpertoire de sortie si nÈcessaire
+# Cr√©er le r√©pertoire de sortie si n√©cessaire
 mkdir -p $OUTPUT_DIR
 
 # Commande HISAT2 pour aligner les lectures
